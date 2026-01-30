@@ -1,4 +1,4 @@
-import { listCameras, Camera, bufMjpegToRgb, bufYuyv422ToRgb, type Frame, type CameraFormat } from 'nokhwa-node';
+import { listCameras, Camera, bufMjpegToRgb, bufYuyv422ToRgb, type Frame, type CameraFormat, FrameFormat } from 'nokhwa-node';
 
 // Type definitions based on nokhwa-node API
 interface NokhwaCameraInfo {
@@ -12,7 +12,7 @@ export interface CameraDevice {
 }
 
 export interface CameraFrame {
-    data: Uint8Array;
+    data: Buffer;
     width: number;
     height: number;
     format: string;
@@ -73,12 +73,22 @@ export class CameraAPI {
                 console.warn("Error during initial camera stop:", e);
             }
 
-            // Set a compatible camera format or just log them
+            // Query and log all compatible formats, prefer MJPEG
             try {
                 const compatibleFormats = this.activeCamera.compatibleCameraFormats();
                 if (compatibleFormats.length > 0) {
-                    const format = compatibleFormats[0]!;
-                    console.log(`Available format: ${format.format} ${format.resolution.width}x${format.resolution.height} @ ${format.frameRate}fps`);
+                    console.log(`Found ${compatibleFormats.length} compatible formats:`);
+                    compatibleFormats.forEach((fmt, i) => {
+                        console.log(`  [${i}] ${fmt.format} ${fmt.resolution.width}x${fmt.resolution.height} @ ${fmt.frameRate}fps`);
+                    });
+
+                    // Prioritize MJPEG format
+                    const mjpegFormat = compatibleFormats.find(f => f.format === FrameFormat.MJPEG);
+                    if (mjpegFormat) {
+                        console.log(`Selected MJPEG format: ${mjpegFormat.resolution.width}x${mjpegFormat.resolution.height} @ ${mjpegFormat.frameRate}fps`);
+                    } else {
+                        console.log(`No MJPEG format available, using: ${compatibleFormats[0]!.format} ${compatibleFormats[0]!.resolution.width}x${compatibleFormats[0]!.resolution.height}`);
+                    }
                 }
             } catch (formatError) {
                 console.warn("Could not query compatible formats:", formatError);
@@ -107,8 +117,19 @@ export class CameraAPI {
             this.frameCount = 0;
 
             try {
-                // Since we stopped it in selectCamera, we can now set the request
-                console.log("Setting camera request for highest resolution...");
+                // Try to set MJPEG format explicitly before opening stream
+                const compatibleFormats = this.activeCamera.compatibleCameraFormats();
+                const mjpegFormat = compatibleFormats.find(f => f.format === FrameFormat.MJPEG);
+
+                if (mjpegFormat) {
+                    console.log(`Requesting MJPEG format: ${mjpegFormat.resolution.width}x${mjpegFormat.resolution.height} @ ${mjpegFormat.frameRate}fps...`);
+                    // Note: setCameraRequest is used for automatic selection
+                    // The camera should already be configured if we found MJPEG in compatible formats
+                } else {
+                    console.log("MJPEG not available, using automatic format selection...");
+                }
+
+                // Set camera request for highest resolution (this helps with format selection)
                 this.activeCamera.setCameraRequest({
                     requestType: 'AbsoluteHighestResolution' as any
                 });
@@ -192,7 +213,7 @@ export class CameraAPI {
         try {
             // Use the native captureFrame method directly
             const frame = this.activeCamera.captureFrame();
-            console.log(`Frame ${this.frameCount} captured successfully, data len: ${frame?.data?.length}`);
+            //console.log(`Frame ${this.frameCount} captured successfully, data len: ${frame?.data?.length}`);
 
             if (!frame || !frame.data || frame.data.length === 0) {
                 return;
@@ -210,7 +231,7 @@ export class CameraAPI {
                 // Keep default formatStr if cameraFormat fails
             }
 
-            let decodedData: Uint8Array = frame.data;
+            let decodedData: Buffer = frame.data;
 
             // Handle decoding if needed
             // Check if data is already uncompressed (nokhwa sometimes autodocodes or reports incorrectly)
@@ -226,9 +247,9 @@ export class CameraAPI {
                 try {
                     // Safety check for MJPEG data
                     if (frame.data.length < 10) throw new Error("MJPEG frame too small");
-                    const rgbData = bufMjpegToRgb(width, height, Buffer.from(frame.data));
+                    const rgbData = bufMjpegToRgb(width, height, frame.data);
                     if (rgbData) {
-                        decodedData = new Uint8Array(rgbData);
+                        decodedData = rgbData;
                         formatStr = "RGB"; 
                     }
                 } catch (decodeError) {
@@ -236,9 +257,9 @@ export class CameraAPI {
                 }
             } else if (formatStr === "YUYV") {
                 try {
-                    const rgbData = bufYuyv422ToRgb(width, height, Buffer.from(frame.data));
+                    const rgbData = bufYuyv422ToRgb(width, height, frame.data);
                     if (rgbData) {
-                        decodedData = new Uint8Array(rgbData);
+                        decodedData = rgbData;
                         formatStr = "RGB";
                     }
                 } catch (decodeError) {

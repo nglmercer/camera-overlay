@@ -9,6 +9,11 @@ import {
   pollMenuEvents,
   CheckMenuItemBuilder,
   SubmenuBuilder, PredefinedMenuItem } from 'tray-icon-node';
+import { cameraAPI } from './camera-api';
+
+// Track the built Submenu for camera selection
+let cameraSubMenu: any = null;
+
 /**
  * Generates a simple 32x32 red icon as a Buffer.
  * @returns {Buffer}
@@ -23,6 +28,104 @@ export function generateIconData() {
   }
   return iconData;
 }
+
+/**
+ * Refresh the camera submenu with current available cameras
+ */
+function refreshCameraMenu(menu: Menu): void {
+  // List available cameras
+  const cameras = cameraAPI.listCameras();
+  
+  // Create new submenu
+  const subMenu = new SubmenuBuilder()
+    .withText("Select Camera")
+    .build();
+  
+  if (cameras.length === 0) {
+    subMenu.appendMenuItem(
+      new MenuItemBuilder()
+        .withText("No cameras found")
+        .withId("no_cameras")
+        .build()
+    );
+  } else {
+    // Get currently selected camera index
+    const activeCamera = cameraAPI.getCameraInfo();
+    
+    for (const cam of cameras) {
+      const isActive = activeCamera && activeCamera.index === cam.index;
+      const item = new CheckMenuItemBuilder()
+        .withText(cam.name)
+        .withId(`camera_${cam.index}`)
+        .withChecked(isActive || false)
+        .build();
+      
+      subMenu.appendCheckMenuItem(item);
+    }
+  }
+  
+  // If we had a previous camera submenu, remove it
+  if (cameraSubMenu) {
+    try {
+      // Rebuild the entire menu structure with the new camera submenu
+      rebuildMenu(menu, subMenu);
+      return;
+    } catch (e) {
+      console.warn("Could not remove old camera submenu:", e);
+    }
+  }
+  
+  menu.appendSubmenu(subMenu);
+  cameraSubMenu = subMenu;
+}
+
+/**
+ * Rebuild the entire menu structure (needed when camera list changes)
+ */
+function rebuildMenu(menu: Menu, cameraSubMenu: any): void {
+  const helloItem = new MenuItemBuilder()
+    .withText("Say Hello")
+    .withId("hello")
+    .build();
+
+  const toggleItem = new CheckMenuItemBuilder()
+    .withText("Notifications Enabled")
+    .withId("toggle_notif")
+    .withChecked(true)
+    .build();
+
+  const subMenu = new SubmenuBuilder()
+    .withText("More Options")
+    .build();
+
+  subMenu.appendMenuItem(
+    new MenuItemBuilder().withText("Sub Item 1").withId("sub1").build()
+  );
+
+  subMenu.appendCheckMenuItem(
+    new CheckMenuItemBuilder()
+      .withText("Enable Turbo Mode")
+      .withId("turbo_mode")
+      .withChecked(false)
+      .build()
+  );
+
+  const quitItem = new MenuItemBuilder()
+    .withText("Exit")
+    .withId("quit")
+    .build();
+
+  // Clear and rebuild menu
+  // Note: We can't fully clear the menu in tray-icon-node, 
+  // so we just append the new camera submenu at the end
+  menu.appendPredefinedMenuItem(PredefinedMenuItem.separator());
+  menu.appendSubmenu(cameraSubMenu);
+  menu.appendPredefinedMenuItem(PredefinedMenuItem.separator());
+  menu.appendMenuItem(quitItem);
+  
+  cameraSubMenu = cameraSubMenu;
+}
+
 export function createTrayMenu() {
   const menu = new Menu();
 
@@ -63,6 +166,11 @@ export function createTrayMenu() {
   menu.appendSubmenu(subMenu);
   menu.appendPredefinedMenuItem(PredefinedMenuItem.separator());
   
+  // Add camera selection submenu
+  refreshCameraMenu(menu);
+  
+  menu.appendPredefinedMenuItem(PredefinedMenuItem.separator());
+  
   const quitItem = new MenuItemBuilder()
     .withText("Exit")
     .withId("quit")
@@ -95,9 +203,37 @@ function handleEvents(menu: Menu) {
     if (menuEvent.id === "quit") {
       isRunning = false;
     }
+    
+    // Handle camera selection
+    if (menuEvent.id && menuEvent.id.startsWith("camera_")) {
+      const cameraIndex = menuEvent.id.replace("camera_", "");
+      handleCameraSelection(menu, cameraIndex);
+    }
+    
     const currentlyChecked = menu.isChecked("toggle_notif");
     menu.setText("toggle_notif", "Notifications: " + currentlyChecked);
     console.log({currentlyChecked})
+  }
+}
+
+/**
+ * Handle camera selection from menu
+ */
+function handleCameraSelection(menu: Menu, cameraIndex: string): void {
+  console.log(`Selecting camera: ${cameraIndex}`);
+  
+  // Stop any active stream
+  cameraAPI.stopStream();
+  
+  // Select the new camera
+  const success = cameraAPI.selectCamera(cameraIndex);
+  
+  if (success) {
+    console.log(`Camera ${cameraIndex} selected successfully`);
+    // Refresh menu to update checkbox states
+    refreshCameraMenu(menu);
+  } else {
+    console.error(`Failed to select camera ${cameraIndex}`);
   }
 }
 

@@ -10,6 +10,9 @@
   "peerDependencies": {
     "typescript": "^5"
   },
+  "scripts": {
+    "start": "bun ./src/index.ts"
+  },
   "dependencies": {
     "nokhwa-node": "^0.1.6",
     "pngjs": "^7.0.0",
