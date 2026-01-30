@@ -109,7 +109,7 @@ export class InputManager {
   private pressedKeys: Set<string> = new Set();
   private shortcutHandlers: Map<string, () => void> = new Map();
   private eventCallback: ((event: InputEvent) => void) | null = null;
-  private isRunning: boolean = false;
+  public isRunning: boolean = false;
 
   constructor(config: InputConfig) {
     this.config = { ...config };
@@ -190,9 +190,8 @@ export class InputManager {
       this.pressedKeys.add(inputEvent.keyPress.key.toLowerCase());
       this.checkShortcuts(inputEvent);
     } else if (inputEvent.eventType === 'keyRelease' && inputEvent.keyRelease) {
-      this.pressedKeys.delete(inputEvent.keyRelease.key.toLowerCase());
+      this.pressedKeys.delete(inputEvent.keyRelease.key.toLowerCase()); 
     }
-
     // Forward event if callback is set
     if (this.eventCallback) {
       this.eventCallback(inputEvent);

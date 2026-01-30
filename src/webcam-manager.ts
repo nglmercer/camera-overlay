@@ -251,7 +251,22 @@ export class WebcamManager {
     logger.info('Starting camera stream...');
 
     const success = cameraAPI.startStream((frame) => {
+      // Skip frame if shutting down
+      if (!this.isRunning) {
+        return;
+      }
+
       try {
+        // Validate frame data
+        if (!frame || !frame.data || frame.data.length === 0) {
+          return;
+        }
+
+        // Validate renderer and window are still available
+        if (!this.renderer || !this.window) {
+          return;
+        }
+
         const buffer = convertFrameToRGBABuffer(
           frame,
           this.cameraWidth,
@@ -259,7 +274,12 @@ export class WebcamManager {
           'fast'
         );
 
-        this.renderer!.render(this.window!, buffer);
+        // Double-check we're still running before rendering
+        if (!this.isRunning || !this.renderer || !this.window) {
+          return;
+        }
+
+        this.renderer.render(this.window, buffer);
         this.frameCount++;
         this.currentFps++;
 
@@ -293,10 +313,14 @@ export class WebcamManager {
    * Stop camera streaming
    */
   stopCamera(): void {
-    cameraAPI.stopStream();
-    this.configManager.setStreaming(false);
-    this.configManager.setCameraActive(false);
-    logger.info('Camera stream stopped');
+    try {
+      cameraAPI.stopStream();
+      this.configManager.setStreaming(false);
+      this.configManager.setCameraActive(false);
+      logger.info('Camera stream stopped');
+    } catch (error) {
+      logger.error('Error stopping camera', { error });
+    }
   }
 
   /**
@@ -467,39 +491,42 @@ export class WebcamManager {
     
     this.isRunning = false;
     
+    // Stop camera first to prevent frame callbacks during shutdown
     try {
-      // Stop tray icon first (prevents callbacks during shutdown)
-      stopTrayIcon();
-    } catch (error) {
-      logger.error('Error stopping tray icon', { error });
-    }
-    
-    try {
-      // Stop camera stream
       this.stopCamera();
     } catch (error) {
       logger.error('Error stopping camera', { error });
     }
     
-    try {
-      // Stop input handling
-      this.inputManager.dispose();
-    } catch (error) {
-      logger.error('Error disposing input manager', { error });
-    }
-    
-    try {
-      // Save config
-      this.configManager.dispose().catch(() => {});
-    } catch (error) {
-      logger.error('Error saving config', { error });
-    }
-    
-    logger.success('Goodbye!');
-    
-    // Use a small delay to allow async cleanup before exit
+    // Small delay to let camera callbacks finish
     setTimeout(() => {
-      process.exit(0);
+      try {
+        // Stop tray icon
+        stopTrayIcon();
+      } catch (error) {
+        logger.error('Error stopping tray icon', { error });
+      }
+      
+      try {
+        // Stop input handling
+        this.inputManager.dispose();
+      } catch (error) {
+        logger.error('Error disposing input manager', { error });
+      }
+      
+      try {
+        // Save config
+        this.configManager.dispose().catch(() => {});
+      } catch (error) {
+        logger.error('Error saving config', { error });
+      }
+      
+      logger.success('Goodbye!');
+      
+      // Use a small delay to allow async cleanup before exit
+      setTimeout(() => {
+        process.exit(0);
+      }, 100);
     }, 100);
   }
 

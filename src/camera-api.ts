@@ -28,6 +28,12 @@ export class CameraAPI {
     private frameCount: number = 0;
     private targetFps: number = 30;
     private lastFrameTime: number = 0;
+    private consecutiveErrors: number = 0;  // Track consecutive errors
+    private maxConsecutiveErrors: number = 10;  // Max errors before stopping stream
+    private lastErrorLogTime: number = 0;  // Throttle error logging
+    private errorLogInterval: number = 5000;  // Log errors every 5 seconds max
+    private disposed: boolean = false;  // Track if disposed
+    private captureInProgress: boolean = false;  // Track if capture is in progress
 
     /**
      * List all available cameras
@@ -207,39 +213,61 @@ export class CameraAPI {
      * Stop the camera stream
      */
     stopStream(): void {
+        if (!this.isStreaming && !this.streamInterval) {
+            return;  // Already stopped
+        }
+
+        console.log("Stopping camera stream...");
+        this.isStreaming = false;
+
+        // Clear the interval first to prevent new captures
         if (this.streamInterval) {
             clearTimeout(this.streamInterval);
             this.streamInterval = null;
         }
 
-        if (this.activeCamera) {
-            try {
-                // Check if stream is open before trying to stop
-                if (this.activeCamera.isStreamOpen()) {
-                    this.activeCamera.stopStream();
+        // Wait a bit for any in-progress capture to complete before stopping camera
+        setTimeout(() => {
+            if (this.activeCamera) {
+                try {
+                    // Check if stream is open before trying to stop
+                    if (this.activeCamera.isStreamOpen()) {
+                        this.activeCamera.stopStream();
+                    }
+                } catch (error) {
+                    console.error("Error stopping stream:", error);
                 }
-            } catch (error) {
-                console.error("Error stopping stream:", error);
             }
-        }
-
-        this.isStreaming = false;
-        this.frameCallback = null;
-        console.log("Camera stream stopped");
+            this.frameCallback = null;
+            console.log("Camera stream stopped");
+        }, 50);  // Small delay to let in-progress capture finish
     }
 
     /**
      * Capture a single frame with retry logic
      */
     private captureFrame(): void {
+        // Prevent capture if disposed or already in progress
+        if (this.disposed || this.captureInProgress) {
+            return;
+        }
+
         if (!this.activeCamera || !this.isStreaming || !this.frameCallback) {
             return;
         }
 
         // Check if stream is actually open
-        if (!this.activeCamera.isStreamOpen()) {
+        try {
+            if (!this.activeCamera.isStreamOpen()) {
+                return;
+            }
+        } catch (e) {
+            // Stream check failed, skip this frame
             return;
         }
+
+        // Prevent concurrent captures
+        this.captureInProgress = true;
 
         if (this.frameCount < 5) {
             console.log(`Capturing frame ${this.frameCount + 1}...`);
@@ -249,10 +277,15 @@ export class CameraAPI {
         try {
             // Use the native captureFrame method directly
             const frame = this.activeCamera.captureFrame();
-            //console.log(`Frame ${this.frameCount} captured successfully, data len: ${frame?.data?.length}`);
 
             if (!frame || !frame.data || frame.data.length === 0) {
+                this.captureInProgress = false;
                 return;
+            }
+
+            // Reset consecutive errors on successful frame
+            if (this.consecutiveErrors > 0) {
+                this.consecutiveErrors = 0;
             }
 
             // Use dimensions from the frame itself
@@ -289,7 +322,7 @@ export class CameraAPI {
                         formatStr = "RGB"; 
                     }
                 } catch (decodeError) {
-                    if (this.frameCount % 60 === 1) console.error("Failed to decode MJPEG frame:", decodeError);
+                    this.logThrottledError("Failed to decode MJPEG frame:", decodeError);
                 }
             } else if (formatStr === "YUYV") {
                 try {
@@ -299,20 +332,41 @@ export class CameraAPI {
                         formatStr = "RGB";
                     }
                 } catch (decodeError) {
-                    if (this.frameCount % 60 === 1) console.error("Failed to decode YUYV frame:", decodeError);
+                    this.logThrottledError("Failed to decode YUYV frame:", decodeError);
                 }
             }
 
-            this.frameCallback({
-                data: decodedData,
-                width: width,
-                height: height,
-                format: formatStr
-            });
-        } catch (error) {
-            if (this.frameCount % 30 === 1) {
-                console.error("Frame capture error:", error);
+            // Only call callback if still streaming and not disposed
+            if (this.isStreaming && !this.disposed && this.frameCallback) {
+                this.frameCallback({
+                    data: decodedData,
+                    width: width,
+                    height: height,
+                    format: formatStr
+                });
             }
+        } catch (error) {
+            this.consecutiveErrors++;
+            this.logThrottledError("Frame capture error:", error);
+            
+            // Stop stream if too many consecutive errors
+            if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
+                console.error(`Too many consecutive errors (${this.consecutiveErrors}), stopping stream`);
+                this.stopStream();
+            }
+        } finally {
+            this.captureInProgress = false;
+        }
+    }
+
+    /**
+     * Log errors with throttling to prevent spam
+     */
+    private logThrottledError(message: string, error: unknown): void {
+        const now = Date.now();
+        if (now - this.lastErrorLogTime >= this.errorLogInterval) {
+            console.error(message, error);
+            this.lastErrorLogTime = now;
         }
     }
 
@@ -387,10 +441,23 @@ export class CameraAPI {
      * Cleanup resources
      */
     dispose(): void {
+        if (this.disposed) {
+            return;
+        }
+        
+        this.disposed = true;
+        
         try {
+            // Wait for any in-progress capture to complete
+            const startTime = Date.now();
+            while (this.captureInProgress && Date.now() - startTime < 1000) {
+                // Wait up to 1 second for capture to complete
+            }
+            
             this.stopStream();
             this.activeCamera = null;
             this.cameras = [];
+            this.frameCallback = null;
             console.log("Camera API disposed");
         } catch (error) {
             console.error("Error disposing camera API:", error);
