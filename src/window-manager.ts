@@ -138,13 +138,18 @@ export class WindowManager {
   setPosition(x: number, y: number): void {
     if (!this.window) return;
     
-    // webview-napi doesn't expose setPosition directly
-    // This would need to be implemented in the native layer
-    // For now, we track the position
+    // Try to use native setPosition if available
+    try {
+        this.window.setOuterPosition(x, y);
+        logger.debug('Window position set via native API', { x, y });
+
+    } catch (error) {
+      logger.warning('Failed to set window position', { x, y, error: String(error) });
+    }
+    
+    // Always track the position in config
     this.config.x = x;
     this.config.y = y;
-    
-    logger.debug('Window position set', { x, y });
   }
 
   /**
@@ -171,7 +176,7 @@ export class WindowManager {
     // This would need to be implemented in the native layer
     this.config.width = width;
     this.config.height = height;
-    
+    this.window.setInnerSize(width,height)
     logger.debug('Window size set', { width, height });
   }
 
@@ -208,7 +213,7 @@ export class WindowManager {
     // webview-napi doesn't expose always on top directly
     // This would need platform-specific implementation
     this.config.alwaysOnTop = alwaysOnTop;
-    
+    this.window.setAlwaysOnTop(alwaysOnTop)
     logger.info('Always on top changed', { alwaysOnTop });
   }
 
@@ -226,7 +231,8 @@ export class WindowManager {
     
     // webview-napi doesn't expose setVisible directly
     this.config.visible = visible;
-    
+    this.window.setVisible(visible)
+
     logger.info('Window visibility changed', { visible });
   }
 

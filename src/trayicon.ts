@@ -353,6 +353,7 @@ export async function runTrayIcon(manager: WebcamManager): Promise<void> {
 
   logger.info('Tray icon shutting down...');
   tray = null;
+  process.exit(1);
 }
 
 /**
