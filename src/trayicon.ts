@@ -25,6 +25,7 @@ const logger = createLogger('TrayIcon');
 // Global references to prevent garbage collection
 let tray: ReturnType<TrayIconBuilder['build']> | null = null;
 let isRunning: boolean = true;
+let onExitCallback: (() => void) | null = null;
 
 /**
  * Generate a simple camera icon as RGBA buffer
@@ -290,6 +291,10 @@ export class TrayMenuController {
 
       case 'exit':
         isRunning = false;
+        // Notify the main application to handle graceful shutdown
+        if (onExitCallback) {
+          onExitCallback();
+        }
         break;
 
       default:
@@ -307,6 +312,13 @@ export class TrayMenuController {
         break;
     }
   }
+}
+
+/**
+ * Set callback for exit event
+ */
+export function setOnExitCallback(callback: () => void): void {
+  onExitCallback = callback;
 }
 
 /**
@@ -353,7 +365,7 @@ export async function runTrayIcon(manager: WebcamManager): Promise<void> {
 
   logger.info('Tray icon shutting down...');
   tray = null;
-  process.exit(1);
+  // Do NOT call process.exit() here - let the main application handle shutdown
 }
 
 /**

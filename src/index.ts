@@ -23,16 +23,37 @@ let manager: WebcamManager | null = null;
  * Handle process signals for graceful shutdown
  */
 function setupSignalHandlers(): void {
-  const shutdown = (signal: string) => {
-    logger.info(`Received ${signal}, shutting down...`);
-    if (manager) {
-      manager.dispose();
+  let isShuttingDown = false;
+
+  const shutdown = (signal: string, exitCode: number = 0) => {
+    if (isShuttingDown) {
+      // Prevent double execution
+      return;
     }
-    process.exit(0);
+    isShuttingDown = true;
+
+    logger.info(`Received ${signal}, shutting down...`);
+    
+    // Remove signal handlers to prevent recursion
+    process.removeAllListeners('SIGINT');
+    process.removeAllListeners('SIGTERM');
+    
+    if (manager) {
+      try {
+        manager.dispose();
+      } catch (error) {
+        logger.error('Error during shutdown', { error });
+      }
+    }
+    
+    // Allow time for cleanup before exit
+    setTimeout(() => {
+      process.exit(exitCode);
+    }, 150);
   };
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT', 0));
+  process.on('SIGTERM', () => shutdown('SIGTERM', 0));
   
   // Handle uncaught errors
   process.on('uncaughtException', (error) => {
@@ -40,14 +61,12 @@ function setupSignalHandlers(): void {
       error: error.message,
       stack: error.stack,
     });
-    if (manager) {
-      manager.dispose();
-    }
-    process.exit(1);
+    shutdown('uncaughtException', 1);
   });
 
   process.on('unhandledRejection', (reason) => {
     logger.error('Unhandled rejection', { reason });
+    // Don't exit on unhandled rejection, just log it
   });
 }
 
@@ -113,10 +132,17 @@ async function main(): Promise<void> {
     });
     
     if (manager) {
-      manager.dispose();
+      try {
+        manager.dispose();
+      } catch (disposeError) {
+        logger.error('Error during cleanup', { error: disposeError });
+      }
     }
     
-    process.exit(1);
+    // Delay exit to allow cleanup
+    setTimeout(() => {
+      process.exit(1);
+    }, 100);
   }
 }
 

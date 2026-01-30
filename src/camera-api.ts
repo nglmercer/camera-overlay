@@ -387,9 +387,14 @@ export class CameraAPI {
      * Cleanup resources
      */
     dispose(): void {
-        this.stopStream();
-        this.activeCamera = null;
-        this.cameras = [];
+        try {
+            this.stopStream();
+            this.activeCamera = null;
+            this.cameras = [];
+            console.log("Camera API disposed");
+        } catch (error) {
+            console.error("Error disposing camera API:", error);
+        }
     }
 }
 

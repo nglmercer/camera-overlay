@@ -10,7 +10,7 @@ import { convertFrameToRGBABuffer } from './frame-converter';
 import { ConfigManager } from './config';
 import { WindowManager } from './window-manager';
 import { InputManager } from './input';
-import { runTrayIcon, stopTrayIcon } from './trayicon';
+import { runTrayIcon, stopTrayIcon, setOnExitCallback } from './trayicon';
 import type { AppConfig, CameraDevice, WindowPosition } from './types';
 
 const logger = createLogger('WebcamManager');
@@ -178,6 +178,12 @@ export class WebcamManager {
    * Start tray icon in background
    */
   private startTrayIcon(): void {
+    // Set up exit callback for graceful shutdown from tray
+    setOnExitCallback(() => {
+      logger.info('Exit requested from tray icon');
+      this.shutdown();
+    });
+
     // Run tray icon in background (non-blocking)
     runTrayIcon(this).catch((error) => {
       logger.error('Tray icon error', {
@@ -452,24 +458,49 @@ export class WebcamManager {
    * Shutdown the application
    */
   private shutdown(): void {
+    if (!this.isRunning) {
+      // Already shutting down, prevent double execution
+      return;
+    }
+
     logger.section('Shutting Down');
     
     this.isRunning = false;
     
-    // Stop tray icon
-    stopTrayIcon();
+    try {
+      // Stop tray icon first (prevents callbacks during shutdown)
+      stopTrayIcon();
+    } catch (error) {
+      logger.error('Error stopping tray icon', { error });
+    }
     
-    // Stop camera
-    this.stopCamera();
+    try {
+      // Stop camera stream
+      this.stopCamera();
+    } catch (error) {
+      logger.error('Error stopping camera', { error });
+    }
     
-    // Stop input
-    this.inputManager.dispose();
+    try {
+      // Stop input handling
+      this.inputManager.dispose();
+    } catch (error) {
+      logger.error('Error disposing input manager', { error });
+    }
     
-    // Save config
-    this.configManager.dispose().catch(() => {});
+    try {
+      // Save config
+      this.configManager.dispose().catch(() => {});
+    } catch (error) {
+      logger.error('Error saving config', { error });
+    }
     
     logger.success('Goodbye!');
-    process.exit(0);
+    
+    // Use a small delay to allow async cleanup before exit
+    setTimeout(() => {
+      process.exit(0);
+    }, 100);
   }
 
   /**

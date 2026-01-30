@@ -360,9 +360,14 @@ export class InputManager {
    * Cleanup
    */
   dispose(): void {
-    this.stop();
-    this.shortcutHandlers.clear();
-    this.eventCallback = null;
+    try {
+      this.stop();
+      this.shortcutHandlers.clear();
+      this.eventCallback = null;
+      logger.info('Input manager disposed');
+    } catch (error) {
+      logger.error('Error disposing input manager', { error });
+    }
   }
 }
 
