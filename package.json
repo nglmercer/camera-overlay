@@ -1,23 +1,44 @@
 {
-  "name": "camera-slint",
-  "module": "src/main.ts",
+  "name": "webcam-manager",
+  "version": "1.0.0",
+  "description": "A desktop webcam manager with system tray integration, global shortcuts, and customizable window positioning",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
   "type": "module",
   "private": true,
+  "author": "Your Name",
+  "license": "MIT",
+  "keywords": [
+    "webcam",
+    "camera",
+    "desktop",
+    "tray",
+    "shortcuts",
+    "tao",
+    "wry",
+    "napi"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/pngjs": "^6.0.5"
+    "typescript": "^5.3.0"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "scripts": {
-    "start": "bun ./src/index.ts"
+    "start": "bun ./src/index.ts",
+    "dev": "bun --watch ./src/index.ts",
+    "build": "tsc --noEmit && bun build ./src/index.ts --outdir ./dist --target node",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist node_modules/.cache"
   },
   "dependencies": {
     "nokhwa-node": "^0.1.6",
-    "pngjs": "^7.0.0",
-    "slint-ui": "^1.15.0-nightly.2026012717",
+    "rdev-node": "^1.0.0",
     "tray-icon-node": "^0.1.1",
-    "webview-napi": "^0.1.6"
+    "webview-napi": "^0.1.7"
   }
 }
