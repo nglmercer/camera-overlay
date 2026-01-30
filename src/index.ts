@@ -1,94 +1,11 @@
 import { WindowBuilder, EventLoop, PixelRenderer, RenderOptions, ScaleMode } from 'webview-napi'
 import { createLogger } from './logger'
 import { cameraAPI } from './camera-api'
+import { convertFrameToRGBABuffer } from './frame-converter'
 
 const logger = createLogger('CameraRender')
 // force x11
 process.env.GDK_BACKEND = 'x11'
-
-/**
- * Convert camera frame data to RGBA buffer for rendering
- * Camera frame may be RGB, RGBA, MJPEG, or YUYV format
- * The PixelRenderer expects a buffer of exactly bufferWidth * bufferHeight * 4 bytes
- */
-function convertFrameToRGBABuffer(frame: { data: Buffer; width: number; height: number; format: string }, bufferWidth: number, bufferHeight: number): Buffer {
-  const targetSize = bufferWidth * bufferHeight * 4;
-  const buffer = Buffer.alloc(targetSize);
-
-  const sourceData = frame.data;
-  const sourceWidth = frame.width;
-  const sourceHeight = frame.height;
-
-  // Calculate scaling factors if source and target dimensions differ
-  const scaleX = sourceWidth / bufferWidth;
-  const scaleY = sourceHeight / bufferHeight;
-
-  // Handle different source formats
-  if (frame.format === 'RGB') {
-    // Convert RGB to RGBA with scaling
-    for (let y = 0; y < bufferHeight; y++) {
-      for (let x = 0; x < bufferWidth; x++) {
-        // Calculate source pixel coordinates (nearest neighbor)
-        const srcX = Math.min(Math.floor(x * scaleX), sourceWidth - 1);
-        const srcY = Math.min(Math.floor(y * scaleY), sourceHeight - 1);
-
-        const srcIndex = (srcY * sourceWidth + srcX) * 3;
-        const dstIndex = (y * bufferWidth + x) * 4;
-
-        buffer[dstIndex] = sourceData[srcIndex] ?? 0;       // R
-        buffer[dstIndex + 1] = sourceData[srcIndex + 1] ?? 0; // G
-        buffer[dstIndex + 2] = sourceData[srcIndex + 2] ?? 0; // B
-        buffer[dstIndex + 3] = 255; // A
-      }
-    }
-  } else if (frame.format === 'RGBA') {
-    // Already RGBA, copy with scaling
-    for (let y = 0; y < bufferHeight; y++) {
-      for (let x = 0; x < bufferWidth; x++) {
-        const srcX = Math.min(Math.floor(x * scaleX), sourceWidth - 1);
-        const srcY = Math.min(Math.floor(y * scaleY), sourceHeight - 1);
-
-        const srcIndex = (srcY * sourceWidth + srcX) * 4;
-        const dstIndex = (y * bufferWidth + x) * 4;
-
-        buffer[dstIndex] = sourceData[srcIndex] ?? 0;       // R
-        buffer[dstIndex + 1] = sourceData[srcIndex + 1] ?? 0; // G
-        buffer[dstIndex + 2] = sourceData[srcIndex + 2] ?? 0; // B
-        buffer[dstIndex + 3] = sourceData[srcIndex + 3] ?? 255; // A
-      }
-    }
-  } else if (frame.format === 'MJPEG' || frame.format === 'YUYV') {
-    // These formats should already be decoded by camera-api.ts to RGB
-    // Convert RGB to RGBA with scaling
-    for (let y = 0; y < bufferHeight; y++) {
-      for (let x = 0; x < bufferWidth; x++) {
-        const srcX = Math.min(Math.floor(x * scaleX), sourceWidth - 1);
-        const srcY = Math.min(Math.floor(y * scaleY), sourceHeight - 1);
-
-        const srcIndex = (srcY * sourceWidth + srcX) * 3;
-        const dstIndex = (y * bufferWidth + x) * 4;
-
-        buffer[dstIndex] = sourceData[srcIndex] ?? 0;       // R
-        buffer[dstIndex + 1] = sourceData[srcIndex + 1] ?? 0; // G
-        buffer[dstIndex + 2] = sourceData[srcIndex + 2] ?? 0; // B
-        buffer[dstIndex + 3] = 255; // A
-      }
-    }
-  } else {
-    // Unknown format, fill with gradient for debugging
-    for (let y = 0; y < bufferHeight; y++) {
-      for (let x = 0; x < bufferWidth; x++) {
-        const index = (y * bufferWidth + x) * 4;
-        buffer[index] = Math.floor(x * 255 / bufferWidth);       // R
-        buffer[index + 1] = Math.floor(y * 255 / bufferHeight);  // G
-        buffer[index + 2] = 128;                       // B
-        buffer[index + 3] = 255;                       // A
-      }
-    }
-  }
-
-  return buffer;
-}
 
 /**
  * Main function to run camera render example
@@ -119,10 +36,28 @@ async function main() {
     const window = builder.build(eventLoop)
     logger.success('Window created', { windowId: window.id })
 
-    // Create pixel renderer with options
+    // Get camera resolution first to match renderer buffer size
+    const cameras = cameraAPI.listCameras()
+    let cameraWidth = windowWidth
+    let cameraHeight = windowHeight
+
+    if (cameras.length > 0) {
+      // Select camera first to query its format
+      const selectedCamera = cameras[0]
+      if (selectedCamera && cameraAPI.selectCamera(selectedCamera.index)) {
+        const format = cameraAPI.getCameraFormat()
+        if (format) {
+          cameraWidth = format.width
+          cameraHeight = format.height
+          logger.info(`Camera native resolution: ${cameraWidth}x${cameraHeight}`)
+        }
+      }
+    }
+
+    // Create pixel renderer with camera native resolution for best quality
     const options: RenderOptions = {
-      bufferWidth: windowWidth,
-      bufferHeight: windowHeight,
+      bufferWidth: cameraWidth,
+      bufferHeight: cameraHeight,
       scaleMode: ScaleMode.Fit,
       backgroundColor: [0, 0, 0, 255]
     }
@@ -139,30 +74,32 @@ async function main() {
 
     // List available cameras
     logger.section('Camera Setup')
-    const cameras = cameraAPI.listCameras()
     logger.info('Available cameras:', { count: cameras.length, cameras: cameras.map(c => c.name) })
-    
+
     if (cameras.length === 0) {
       logger.error('No cameras found! Please connect a camera.')
       process.exit(1)
     }
 
-    // Select the first available camera
+    // Select the first available camera (already selected earlier for resolution query)
     const selectedCamera = cameras[0]
     if (!selectedCamera) {
       logger.error('Failed to get camera info')
       process.exit(1)
     }
     logger.info('Selecting camera:', { index: selectedCamera.index, name: selectedCamera.name })
-    
-    if (!cameraAPI.selectCamera(selectedCamera.index)) {
-      logger.error('Failed to select camera')
-      process.exit(1)
+
+    // Camera was already selected earlier, just verify it's still selected
+    if (!cameraAPI.hasSelectedCamera()) {
+      if (!cameraAPI.selectCamera(selectedCamera.index)) {
+        logger.error('Failed to select camera')
+        process.exit(1)
+      }
     }
     logger.success('Camera selected')
 
-    // Create a placeholder buffer for initial rendering
-    const placeholderBuffer = Buffer.alloc(windowWidth * windowHeight * 4)
+    // Create a placeholder buffer for initial rendering (use camera resolution)
+    const placeholderBuffer = Buffer.alloc(cameraWidth * cameraHeight * 4)
     for (let i = 0; i < placeholderBuffer.length; i += 4) {
       placeholderBuffer[i] = 50;     // R
       placeholderBuffer[i + 1] = 50; // G
@@ -181,8 +118,8 @@ async function main() {
 
     const frameCallback = (frame: { data: Buffer; width: number; height: number; format: string }) => {
       try {
-        // Convert frame to RGBA buffer
-        const buffer = convertFrameToRGBABuffer(frame, windowWidth, windowHeight)
+        // Convert frame to RGBA buffer using camera native resolution with fast scaling
+        const buffer = convertFrameToRGBABuffer(frame, cameraWidth, cameraHeight, 'fast')
         
         // Render the buffer to the window
         renderer.render(window, buffer)

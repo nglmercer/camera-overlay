@@ -1,4 +1,5 @@
-import { listCameras, Camera, bufMjpegToRgb, bufYuyv422ToRgb, type Frame, type CameraFormat, FrameFormat } from 'nokhwa-node';
+import { listCameras, Camera, bufMjpegToRgb, bufYuyv422ToRgb, type Frame, type CameraFormat as NokhwaCameraFormat, FrameFormat } from 'nokhwa-node';
+import { selectBestCameraFormat, type CameraFormat } from './frame-converter';
 
 // Type definitions based on nokhwa-node API
 interface NokhwaCameraInfo {
@@ -25,6 +26,8 @@ export class CameraAPI {
     private frameCallback: ((frame: CameraFrame) => void) | null = null;
     private streamInterval: Timer | null = null;
     private frameCount: number = 0;
+    private targetFps: number = 30;
+    private lastFrameTime: number = 0;
 
     /**
      * List all available cameras
@@ -82,12 +85,21 @@ export class CameraAPI {
                         console.log(`  [${i}] ${fmt.format} ${fmt.resolution.width}x${fmt.resolution.height} @ ${fmt.frameRate}fps`);
                     });
 
-                    // Prioritize MJPEG format
-                    const mjpegFormat = compatibleFormats.find(f => f.format === FrameFormat.MJPEG);
-                    if (mjpegFormat) {
-                        console.log(`Selected MJPEG format: ${mjpegFormat.resolution.width}x${mjpegFormat.resolution.height} @ ${mjpegFormat.frameRate}fps`);
+                    // Use frame-converter to select best format
+                    const preferredRes = (process.env.CAMERA_RESOLUTION as 'highest' | 'medium' | 'lowest') || 'highest';
+                    const bestFormat = selectBestCameraFormat(
+                        compatibleFormats.map(f => ({
+                            format: f.format as string,
+                            width: f.resolution.width,
+                            height: f.resolution.height,
+                            frameRate: f.frameRate
+                        })),
+                        preferredRes
+                    );
+                    if (bestFormat) {
+                        console.log(`Selected format: ${bestFormat.format} ${bestFormat.width}x${bestFormat.height} @ ${bestFormat.frameRate}fps (${preferredRes})`);
                     } else {
-                        console.log(`No MJPEG format available, using: ${compatibleFormats[0]!.format} ${compatibleFormats[0]!.resolution.width}x${compatibleFormats[0]!.resolution.height}`);
+                        console.log(`No format selected, using: ${compatibleFormats[0]!.format} ${compatibleFormats[0]!.resolution.width}x${compatibleFormats[0]!.resolution.height}`);
                     }
                 }
             } catch (formatError) {
@@ -119,12 +131,19 @@ export class CameraAPI {
             try {
                 // Try to set MJPEG format explicitly before opening stream
                 const compatibleFormats = this.activeCamera.compatibleCameraFormats();
-                const mjpegFormat = compatibleFormats.find(f => f.format === FrameFormat.MJPEG);
+                const preferredRes = (process.env.CAMERA_RESOLUTION as 'highest' | 'medium' | 'lowest') || 'highest';
+                const bestFormat = selectBestCameraFormat(
+                    compatibleFormats.map(f => ({
+                        format: f.format as string,
+                        width: f.resolution.width,
+                        height: f.resolution.height,
+                        frameRate: f.frameRate
+                    })),
+                    preferredRes
+                );
 
-                if (mjpegFormat) {
-                    console.log(`Requesting MJPEG format: ${mjpegFormat.resolution.width}x${mjpegFormat.resolution.height} @ ${mjpegFormat.frameRate}fps...`);
-                    // Note: setCameraRequest is used for automatic selection
-                    // The camera should already be configured if we found MJPEG in compatible formats
+                if (bestFormat) {
+                    console.log(`Requesting format: ${bestFormat.format} ${bestFormat.width}x${bestFormat.height} @ ${bestFormat.frameRate}fps (${preferredRes})...`);
                 } else {
                     console.log("MJPEG not available, using automatic format selection...");
                 }
@@ -143,18 +162,35 @@ export class CameraAPI {
             this.isStreaming = true;
             console.log("Camera stream starting, waiting for stabilization...");
 
-            // Start frame capture loop
+            // Start frame capture loop with dynamic FPS based on camera format
             const capture = () => {
-                if (this.isStreaming && this.activeCamera) {
-                    this.captureFrame();
-                    this.streamInterval = setTimeout(capture, 33) as any;
-                }
+                if (!this.isStreaming || !this.activeCamera) return;
+
+                const now = Date.now();
+                const elapsed = now - this.lastFrameTime;
+                const frameInterval = 1000 / this.targetFps;
+
+                // Capture frame
+                this.captureFrame();
+                this.lastFrameTime = now;
+
+                // Schedule next frame with dynamic timing
+                const nextFrameDelay = Math.max(1, frameInterval - (Date.now() - now));
+                this.streamInterval = setTimeout(capture, nextFrameDelay) as any;
             };
 
-            // Wait for stabilization
+            // Wait for stabilization and get actual camera FPS
             setTimeout(() => {
                 if (this.isStreaming && this.activeCamera) {
-                    console.log("Camera stream ready");
+                    // Get actual camera format to set correct FPS
+                    try {
+                        const format = this.activeCamera.cameraFormat();
+                        this.targetFps = format.frameRate;
+                        console.log(`Camera stream ready at ${format.resolution.width}x${format.resolution.height} @ ${this.targetFps}fps`);
+                    } catch {
+                        console.log("Camera stream ready");
+                    }
+                    this.lastFrameTime = Date.now();
                     capture();
                 }
             }, 1000); // 1 second stabilization
