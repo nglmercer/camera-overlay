@@ -1,0 +1,20 @@
+{
+  "name": "camera-slint",
+  "module": "src/main.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/pngjs": "^6.0.5"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "nokhwa-node": "^0.1.6",
+    "pngjs": "^7.0.0",
+    "slint-ui": "^1.15.0-nightly.2026012717",
+    "tray-icon-node": "^0.1.1",
+    "webview-napi": "^0.1.6"
+  }
+}
