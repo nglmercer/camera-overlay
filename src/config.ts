@@ -14,9 +14,10 @@ const logger = createLogger('Config');
 
 const CONFIG_VERSION = '1.0.0';
 
+// Default window config with 16:9 aspect ratio
 const DEFAULT_WINDOW_CONFIG: WindowConfig = {
   width: 640,
-  height: 480,
+  height: 360,  // 16:9 aspect ratio (was 480 - 4:3)
   x: 100,
   y: 100,
   alwaysOnTop: true,
@@ -241,18 +242,24 @@ export class ConfigManager {
   setWindowPosition(x: number, y: number): void {
     this.config.window.x = x;
     this.config.window.y = y;
-    this.save().catch(() => {});
+    this.saveImmediate().catch((err) => {
+      logger.error('Failed to save window position', { error: err });
+    });
   }
 
   setWindowSize(width: number, height: number): void {
     this.config.window.width = width;
     this.config.window.height = height;
-    this.save().catch(() => {});
+    this.saveImmediate().catch((err) => {
+      logger.error('Failed to save window size', { error: err });
+    });
   }
 
   setAlwaysOnTop(alwaysOnTop: boolean): void {
     this.config.window.alwaysOnTop = alwaysOnTop;
-    this.save().catch(() => {});
+    this.saveImmediate().catch((err) => {
+      logger.error('Failed to save always on top', { error: err });
+    });
   }
 
   setSelectedCamera(index: string | null): void {

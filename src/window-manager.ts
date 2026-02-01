@@ -6,7 +6,7 @@
 import type { Window, EventLoop } from 'webview-napi';
 import type { WindowConfig, WindowPosition, WindowState, WindowBounds } from './types';
 import { createLogger } from './logger';
-
+import { getDisplaySize } from 'rdev-node';
 const logger = createLogger('WindowManager');
 
 /**
@@ -14,11 +14,11 @@ const logger = createLogger('WindowManager');
  * In a real implementation, you'd query the actual screen size
  */
 function getScreenDimensions(): { width: number; height: number } {
-  // Default to 1920x1080, could be queried from system
+  const size = getDisplaySize();
   return {
-    width: 1920,
-    height: 1080,
-  };
+    width: size.width,
+    height: size.height
+  }
 }
 
 /**
@@ -181,27 +181,97 @@ export class WindowManager {
   }
 
   /**
+   * Update position from external source (e.g., window drag)
+   * This updates the config without calling setOuterPosition
+   */
+  updatePosition(x: number, y: number): void {
+    this.config.x = x;
+    this.config.y = y;
+    logger.debug('Position updated from external source', { x, y });
+  }
+
+  /**
+   * Update size from external source (e.g., window resize)
+   * This updates the config without calling setInnerSize
+   */
+  updateSize(width: number, height: number): void {
+    this.config.width = width;
+    this.config.height = height;
+    logger.debug('Size updated from external source', { width, height });
+  }
+
+  /**
    * Set predefined window size
+   * Sizes maintain 16:9 aspect ratio (standard camera aspect ratio)
+   * - small: 320x180 (16:9) - positioned at bottom-right with no padding
+   * - medium: 640x360 (16:9) - standard medium size
+   * - large: 1280x720 (16:9) - HD resolution
+   * - fullscreen: 1920x1080 (16:9) - Full HD, centered
    */
   setPredefinedSize(size: 'small' | 'medium' | 'large' | 'fullscreen'): void {
+    // 16:9 aspect ratio sizes (standard for 1920x1080 cameras)
     const sizes = {
-      small: { width: 320, height: 240 },
-      medium: { width: 640, height: 480 },
-      large: { width: 1280, height: 720 },
-      fullscreen: { width: 1920, height: 1080 },
+      small: { width: 320, height: 180 },    // 16:9
+      medium: { width: 640, height: 360 },   // 16:9
+      large: { width: 1280, height: 720 },   // 16:9
+      fullscreen: { width: 1920, height: 1080 }, // 16:9 Full HD
     };
 
     const newSize = sizes[size];
     if (newSize) {
       this.setSize(newSize.width, newSize.height);
-      
-      // Recenter if needed
-      if (size === 'fullscreen') {
+
+      // Reposition based on size for better UX
+      if (size === 'small') {
+        // Small size: position at bottom-right corner with no padding
+        this.setPositionToCorner('bottom-right', 0);
+      } else if (size === 'fullscreen') {
+        // Fullscreen: center on screen
         this.setPresetPosition('center');
       }
-      
+      // medium and large keep their current position
+
       logger.info('Window size changed', { size, ...newSize });
     }
+  }
+
+  /**
+   * Set window position to a specific corner with custom padding
+   */
+  setPositionToCorner(
+    corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right',
+    padding: number = 10
+  ): void {
+    const screen = getScreenDimensions();
+
+    let x: number;
+    let y: number;
+
+    switch (corner) {
+      case 'top-left':
+        x = padding;
+        y = padding;
+        break;
+      case 'top-right':
+        x = screen.width - this.config.width - padding;
+        y = padding;
+        break;
+      case 'bottom-left':
+        x = padding;
+        y = screen.height - this.config.height - padding;
+        break;
+      case 'bottom-right':
+        x = screen.width - this.config.width - padding;
+        y = screen.height - this.config.height - padding;
+        break;
+    }
+
+    // Ensure position is never negative
+    x = Math.max(0, x);
+    y = Math.max(0, y);
+
+    this.setPosition(x, y);
+    logger.info('Window positioned to corner', { corner, x, y, padding });
   }
 
   /**

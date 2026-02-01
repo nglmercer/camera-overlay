@@ -88,7 +88,7 @@ export class WebcamManager {
 
     this.eventLoop = new EventLoop();
     
-    const windowConfig = config.window;
+    const windowConfig = this.configManager.getConfig().window;
     const builder = new WindowBuilder()
       .withTitle('Webcam Manager')
       .withInnerSize(windowConfig.width, windowConfig.height)
@@ -384,6 +384,21 @@ export class WebcamManager {
   }
 
   /**
+   * Set always on top state
+   */
+  setAlwaysOnTop(value: boolean): void {
+    this.windowManager.setAlwaysOnTop(value);
+    this.configManager.setAlwaysOnTop(value);
+  }
+
+  /**
+   * Check if window is always on top
+   */
+  isAlwaysOnTop(): boolean {
+    return this.windowManager.isAlwaysOnTop();
+  }
+
+  /**
    * Toggle window visibility
    */
   toggleVisible(): boolean {
@@ -455,6 +470,12 @@ export class WebcamManager {
     logger.section('Running Event Loop');
     logger.info('Press Ctrl+C to exit');
 
+    // Track last saved position/size to avoid excessive saves
+    let lastSavedPosition = { x: this.windowManager.getBounds().x, y: this.windowManager.getBounds().y };
+    let lastSavedSize = { width: this.windowManager.getBounds().width, height: this.windowManager.getBounds().height };
+    let saveThrottleTimer: Timer | null = null;
+    let framesSinceLastCheck = 0;
+
     const poll = () => {
       if (!this.isRunning || !this.eventLoop) {
         this.shutdown();
@@ -462,6 +483,61 @@ export class WebcamManager {
       }
 
       if (this.eventLoop.runIteration()) {
+        // Check for position/size changes every 30 frames (~2 seconds at 60 FPS)
+        framesSinceLastCheck++;
+        if (framesSinceLastCheck >= 30 && this.window) {
+          framesSinceLastCheck = 0;
+          try {
+            const currentPos = this.window.outerPosition();
+            const currentSize = this.window.innerSize();
+
+            const posChanged = Math.abs(currentPos.x - lastSavedPosition.x) > 5 ||
+                              Math.abs(currentPos.y - lastSavedPosition.y) > 5;
+            const sizeChanged = Math.abs(currentSize.width - lastSavedSize.width) > 5 ||
+                               Math.abs(currentSize.height - lastSavedSize.height) > 5;
+
+            if (posChanged || sizeChanged) {
+              logger.debug('Window change detected', {
+                posChanged,
+                sizeChanged,
+                currentPos,
+                currentSize,
+                lastSavedPosition,
+                lastSavedSize
+              });
+
+              // Update tracked values
+              if (posChanged) {
+                lastSavedPosition = { x: currentPos.x, y: currentPos.y };
+                this.windowManager.updatePosition(currentPos.x, currentPos.y);
+              }
+              if (sizeChanged) {
+                lastSavedSize = { width: currentSize.width, height: currentSize.height };
+                this.windowManager.updateSize(currentSize.width, currentSize.height);
+              }
+
+              // Throttle config saves to avoid excessive disk writes
+              if (saveThrottleTimer) {
+                clearTimeout(saveThrottleTimer);
+              }
+              saveThrottleTimer = setTimeout(() => {
+                if (posChanged) {
+                  this.configManager.setWindowPosition(lastSavedPosition.x, lastSavedPosition.y);
+                }
+                if (sizeChanged) {
+                  this.configManager.setWindowSize(lastSavedSize.width, lastSavedSize.height);
+                }
+                logger.info('Window position/size saved to config', {
+                  position: `${lastSavedPosition.x},${lastSavedPosition.y}`,
+                  size: `${lastSavedSize.width}x${lastSavedSize.height}`
+                });
+              }, 1000) as unknown as Timer;
+            }
+          } catch (error) {
+            // Ignore errors from window position/size queries (window might be minimized/hidden)
+          }
+        }
+
         // Window still open, continue polling
         setTimeout(poll, 16); // ~60 FPS
       } else {

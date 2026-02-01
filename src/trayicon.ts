@@ -15,6 +15,7 @@ import {
   CheckMenuItemBuilder,
   SubmenuBuilder,
   PredefinedMenuItem,
+  type MenuEvent
 } from 'tray-icon-node';
 import type { WebcamManager } from './webcam-manager';
 import type { CameraDevice, WindowPosition } from './types';
@@ -112,11 +113,11 @@ export class TrayMenuController {
       .build();
     this.menu.appendCheckMenuItem(this.toggleCameraItem, 'toggle-camera');
 
-    // Always on Top
+    // Always on Top - get initial state from window manager
     this.alwaysOnTopItem = new CheckMenuItemBuilder()
       .withText('Always on Top')
       .withId('toggle-always-on-top')
-      .withChecked(false) // Would get from window manager
+      .withChecked(this.manager.isAlwaysOnTop())
       .build();
     this.menu.appendCheckMenuItem(this.alwaysOnTopItem, 'toggle-always-on-top');
 
@@ -233,8 +234,8 @@ export class TrayMenuController {
       .build();
 
     const sizes = [
-      { id: 'small', label: 'Small (320x240)' },
-      { id: 'medium', label: 'Medium (640x480)' },
+      { id: 'small', label: 'Small (320x180)' },
+      { id: 'medium', label: 'Medium (640x360)' },
       { id: 'large', label: 'Large (1280x720)' },
     ];
 
@@ -265,20 +266,27 @@ export class TrayMenuController {
       // Note: tray-icon-node may not support dynamic updates
     }
   }
-
+  isChecked(id:string){
+    return this.menu.isChecked(id)
+  }
   /**
    * Handle menu events
    */
-  handleEvent(eventId: string): void {
-    logger.info('Menu event', { id: eventId });
+  handleEvent(data: MenuEvent): void {
+    const {id}=data;
+    logger.info('Menu event', { id });
 
-    switch (eventId) {
+    switch (id) {
       case 'toggle-camera':
         this.manager.toggleCamera();
         break;
 
       case 'toggle-always-on-top':
-        this.manager.toggleAlwaysOnTop();
+        // The menu item toggles automatically, so we need to check the NEW state
+        // When user clicks, the checked state flips, so we apply that new state
+        const newAlwaysOnTopState = this.isChecked(id);
+        this.manager.setAlwaysOnTop(newAlwaysOnTopState);
+        logger.info('Always on top toggled', { newState: newAlwaysOnTopState });
         break;
 
       case 'minimize':
@@ -299,14 +307,14 @@ export class TrayMenuController {
 
       default:
         // Handle dynamic IDs
-        if (eventId.startsWith('camera-')) {
-          const cameraIndex = eventId.replace('camera-', '');
+        if (id.startsWith('camera-')) {
+          const cameraIndex = id.replace('camera-', '');
           this.manager.selectCamera(cameraIndex);
-        } else if (eventId.startsWith('position-')) {
-          const position = eventId.replace('position-', '') as WindowPosition;
+        } else if (id.startsWith('position-')) {
+          const position = id.replace('position-', '') as WindowPosition;
           this.manager.setPosition(position);
-        } else if (eventId.startsWith('size-')) {
-          const size = eventId.replace('size-', '') as 'small' | 'medium' | 'large';
+        } else if (id.startsWith('size-')) {
+          const size = id.replace('size-', '') as 'small' | 'medium' | 'large';
           this.manager.setPredefinedSize(size);
         }
         break;
@@ -356,7 +364,7 @@ export async function runTrayIcon(manager: WebcamManager): Promise<void> {
     // Poll menu events
     const menuEvent = pollMenuEvents();
     if (menuEvent?.id) {
-      controller.handleEvent(menuEvent.id);
+      controller.handleEvent(menuEvent);
     }
 
     // Small delay to prevent high CPU usage (~30 FPS)
