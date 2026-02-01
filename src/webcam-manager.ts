@@ -62,8 +62,9 @@ export class WebcamManager {
       // Initialize input
       this.initializeInput(config);
       
-      // Auto-start camera if it was active or if this is first run
-      if (config.state.cameraActive || config.camera.selectedCameraIndex === null) {
+      // Auto-start camera if it was active
+      if (config.state.cameraActive) {
+        logger.info('Auto-starting camera (was active in previous session)');
         await this.startCamera();
       }
       
@@ -101,10 +102,15 @@ export class WebcamManager {
     this.window = builder.build(this.eventLoop);
     this.windowManager.setWindow(this.window);
 
+    // Apply alwaysOnTop from config
+    this.windowManager.setAlwaysOnTop(windowConfig.alwaysOnTop);
+    logger.info('Applied alwaysOnTop setting', { alwaysOnTop: windowConfig.alwaysOnTop });
+
     logger.success('Window created', {
       id: this.window.id,
       size: `${windowConfig.width}x${windowConfig.height}`,
       position: `${windowConfig.x},${windowConfig.y}`,
+      alwaysOnTop: windowConfig.alwaysOnTop,
     });
 
     // Initialize renderer

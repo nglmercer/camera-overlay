@@ -31,7 +31,7 @@
   "scripts": {
     "start": "bun ./src/index.ts",
     "dev": "bun --watch ./src/index.ts",
-    "build": "tsc --noEmit && bun build ./src/index.ts --outdir ./dist --target node",
+    "build": "tsc --noEmit && bun build --compile ./src/index.ts --outfile ./dist/webcam-manager",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist node_modules/.cache"
   },
