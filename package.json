@@ -37,8 +37,8 @@
   },
   "dependencies": {
     "nokhwa-node": "^0.1.6",
-    "rdev-node": "^1.0.0",
+    "rdev-node": "^1.0.1",
     "tray-icon-node": "^0.1.1",
-    "webview-napi": "^0.1.7"
+    "webview-napi": "^0.1.8"
   }
 }

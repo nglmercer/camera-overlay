@@ -81,7 +81,6 @@ export interface ShortcutConfig {
 export interface InputConfig {
   globalShortcutsEnabled: boolean;
   blockInputWhenActive: boolean;
-  shortcuts: Record<string, string>; // action -> key combination
 }
 
 export type InputEventType = 'keyPress' | 'keyRelease' | 'mouseMove' | 'mousePress' | 'mouseRelease' | 'wheel';

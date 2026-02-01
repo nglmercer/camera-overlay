@@ -37,17 +37,6 @@ const DEFAULT_CAMERA_CONFIG: CameraConfig = {
 const DEFAULT_INPUT_CONFIG: InputConfig = {
   globalShortcutsEnabled: true,
   blockInputWhenActive: false,
-  shortcuts: {
-    'toggle-camera': 'Ctrl+Shift+C',
-    'screenshot': 'Ctrl+Shift+S',
-    'hide-window': 'Ctrl+Shift+H',
-    'toggle-always-on-top': 'Ctrl+Shift+T',
-    'position-top-left': 'Ctrl+Shift+Home',
-    'position-top-right': 'Ctrl+Shift+End',
-    'position-bottom-left': 'Ctrl+Shift+PageDown',
-    'position-bottom-right': 'Ctrl+Shift+PageUp',
-    'position-center': 'Ctrl+Shift+C',
-  },
 };
 
 const DEFAULT_APP_STATE: AppState = {

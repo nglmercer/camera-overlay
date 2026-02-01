@@ -9,7 +9,7 @@ import { cameraAPI } from './camera-api';
 import { convertFrameToRGBABuffer } from './frame-converter';
 import { ConfigManager } from './config';
 import { WindowManager } from './window-manager';
-import { InputManager } from './input';
+import { InputManager,DEFAULT_SHORTCUTS } from './input';
 import { runTrayIcon, stopTrayIcon, setOnExitCallback } from './trayicon';
 import type { AppConfig, CameraDevice, WindowPosition } from './types';
 
@@ -39,7 +39,7 @@ export class WebcamManager {
   constructor() {
     this.configManager = new ConfigManager();
     this.windowManager = new WindowManager(this.configManager.getWindowConfig());
-    this.inputManager = new InputManager(this.configManager.getInputConfig());
+    this.inputManager = new InputManager();
   }
 
   /**
@@ -111,7 +111,7 @@ export class WebcamManager {
     const renderOptions: RenderOptions = {
       bufferWidth: this.cameraWidth,
       bufferHeight: this.cameraHeight,
-      scaleMode: ScaleMode.Fit,
+      scaleMode: ScaleMode.Fill,
       backgroundColor: [0, 0, 0, 255],
     };
     
@@ -152,24 +152,19 @@ export class WebcamManager {
     logger.section('Input Initialization');
 
     // Register shortcut handlers
-    this.inputManager.registerShortcut('toggle-camera', () => this.toggleCamera());
-    this.inputManager.registerShortcut('hide-window', () => this.windowManager.toggleVisible());
-    this.inputManager.registerShortcut('toggle-always-on-top', () => {
+    this.inputManager.register(DEFAULT_SHORTCUTS['toggle-camera'], () => this.toggleCamera());
+    this.inputManager.register(DEFAULT_SHORTCUTS['hide-window'], () => this.windowManager.toggleVisible());
+    this.inputManager.register(DEFAULT_SHORTCUTS['toggle-always-on-top'], () => {
       const newState = this.windowManager.toggleAlwaysOnTop();
       this.configManager.setAlwaysOnTop(newState);
     });
-    this.inputManager.registerShortcut('position-top-left', () => this.windowManager.setPresetPosition('top-left'));
-    this.inputManager.registerShortcut('position-top-right', () => this.windowManager.setPresetPosition('top-right'));
-    this.inputManager.registerShortcut('position-bottom-left', () => this.windowManager.setPresetPosition('bottom-left'));
-    this.inputManager.registerShortcut('position-bottom-right', () => this.windowManager.setPresetPosition('bottom-right'));
-    this.inputManager.registerShortcut('position-center', () => this.windowManager.setPresetPosition('center'));
-    this.inputManager.registerShortcut('minimize', () => this.windowManager.minimize());
-    this.inputManager.registerShortcut('restore', () => this.windowManager.restore());
-
-    // Start listening
-    if (config.input.globalShortcutsEnabled) {
-      this.inputManager.initialize();
-    }
+    this.inputManager.register(DEFAULT_SHORTCUTS['position-top-left'], () => this.windowManager.setPresetPosition('top-left'));
+    this.inputManager.register(DEFAULT_SHORTCUTS['position-top-right'], () => this.windowManager.setPresetPosition('top-right'));
+    this.inputManager.register(DEFAULT_SHORTCUTS['position-bottom-left'], () => this.windowManager.setPresetPosition('bottom-left'));
+    this.inputManager.register(DEFAULT_SHORTCUTS['position-bottom-right'], () => this.windowManager.setPresetPosition('bottom-right'));
+    this.inputManager.register(DEFAULT_SHORTCUTS['position-center'], () => this.windowManager.setPresetPosition('center'));
+    this.inputManager.register(DEFAULT_SHORTCUTS.minimize, () => this.windowManager.minimize());
+    this.inputManager.register(DEFAULT_SHORTCUTS.restore, () => this.windowManager.restore());
 
     logger.success('Input handlers registered');
   }
