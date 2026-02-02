@@ -1,6 +1,8 @@
 import { listCameras, Camera, bufMjpegToRgb, bufYuyv422ToRgb, type Frame, type CameraFormat as NokhwaCameraFormat, FrameFormat } from 'nokhwa-node';
 import { selectBestCameraFormat, type CameraFormat } from './frame-converter';
-
+import { createLogger } from './logger';
+const logger = createLogger('camera-api');
+logger.enabled = false;
 // Type definitions based on nokhwa-node API
 interface NokhwaCameraInfo {
     index: string;
@@ -76,7 +78,7 @@ export class CameraAPI {
             try {
                 if (this.activeCamera.isStreamOpen()) {
                     this.activeCamera.stopStream();
-                    console.log("Stopped auto-opened camera stream to allow configuration");
+                    logger.info("Stopped auto-opened camera stream to allow configuration");
                 }
             } catch (e) {
                 console.warn("Error during initial camera stop:", e);
@@ -86,9 +88,9 @@ export class CameraAPI {
             try {
                 const compatibleFormats = this.activeCamera.compatibleCameraFormats();
                 if (compatibleFormats.length > 0) {
-                    console.log(`Found ${compatibleFormats.length} compatible formats:`);
+                    logger.info(`Found ${compatibleFormats.length} compatible formats:`);
                     compatibleFormats.forEach((fmt, i) => {
-                        console.log(`  [${i}] ${fmt.format} ${fmt.resolution.width}x${fmt.resolution.height} @ ${fmt.frameRate}fps`);
+                        logger.info(`  [${i}] ${fmt.format} ${fmt.resolution.width}x${fmt.resolution.height} @ ${fmt.frameRate}fps`);
                     });
 
                     // Use frame-converter to select best format
@@ -103,16 +105,16 @@ export class CameraAPI {
                         preferredRes
                     );
                     if (bestFormat) {
-                        console.log(`Selected format: ${bestFormat.format} ${bestFormat.width}x${bestFormat.height} @ ${bestFormat.frameRate}fps (${preferredRes})`);
+                        logger.info(`Selected format: ${bestFormat.format} ${bestFormat.width}x${bestFormat.height} @ ${bestFormat.frameRate}fps (${preferredRes})`);
                     } else {
-                        console.log(`No format selected, using: ${compatibleFormats[0]!.format} ${compatibleFormats[0]!.resolution.width}x${compatibleFormats[0]!.resolution.height}`);
+                        logger.info(`No format selected, using: ${compatibleFormats[0]!.format} ${compatibleFormats[0]!.resolution.width}x${compatibleFormats[0]!.resolution.height}`);
                     }
                 }
             } catch (formatError) {
                 console.warn("Could not query compatible formats:", formatError);
             }
 
-            console.log(`Camera selected and configured: ${cameraIndex}`);
+            logger.info(`Camera selected and configured: ${cameraIndex}`);
             return true;
         } catch (error) {
             console.error(`Failed to select camera ${cameraIndex}:`, error);
@@ -149,9 +151,9 @@ export class CameraAPI {
                 );
 
                 if (bestFormat) {
-                    console.log(`Requesting format: ${bestFormat.format} ${bestFormat.width}x${bestFormat.height} @ ${bestFormat.frameRate}fps (${preferredRes})...`);
+                    logger.info(`Requesting format: ${bestFormat.format} ${bestFormat.width}x${bestFormat.height} @ ${bestFormat.frameRate}fps (${preferredRes})...`);
                 } else {
-                    console.log("MJPEG not available, using automatic format selection...");
+                    logger.info("MJPEG not available, using automatic format selection...");
                 }
 
                 // Set camera request for highest resolution (this helps with format selection)
@@ -162,11 +164,11 @@ export class CameraAPI {
                 console.warn("Could not set camera request:", e);
             }
 
-            console.log("Opening camera stream...");
+            logger.info("Opening camera stream...");
             this.activeCamera.openStream();
             
             this.isStreaming = true;
-            console.log("Camera stream starting, waiting for stabilization...");
+            logger.info("Camera stream starting, waiting for stabilization...");
 
             // Start frame capture loop with dynamic FPS based on camera format
             const capture = () => {
@@ -192,9 +194,9 @@ export class CameraAPI {
                     try {
                         const format = this.activeCamera.cameraFormat();
                         this.targetFps = format.frameRate;
-                        console.log(`Camera stream ready at ${format.resolution.width}x${format.resolution.height} @ ${this.targetFps}fps`);
+                        logger.info(`Camera stream ready at ${format.resolution.width}x${format.resolution.height} @ ${this.targetFps}fps`);
                     } catch {
-                        console.log("Camera stream ready");
+                        logger.info("Camera stream ready");
                     }
                     this.lastFrameTime = Date.now();
                     capture();
@@ -217,7 +219,7 @@ export class CameraAPI {
             return;  // Already stopped
         }
 
-        console.log("Stopping camera stream...");
+        logger.info("Stopping camera stream...");
         this.isStreaming = false;
 
         // Clear the interval first to prevent new captures
@@ -239,7 +241,7 @@ export class CameraAPI {
                 }
             }
             this.frameCallback = null;
-            console.log("Camera stream stopped");
+            logger.info("Camera stream stopped");
         }, 50);  // Small delay to let in-progress capture finish
     }
 
@@ -270,7 +272,7 @@ export class CameraAPI {
         this.captureInProgress = true;
 
         if (this.frameCount < 5) {
-            console.log(`Capturing frame ${this.frameCount + 1}...`);
+            logger.info(`Capturing frame ${this.frameCount + 1}...`);
         }
         this.frameCount++;
         
@@ -458,7 +460,7 @@ export class CameraAPI {
             this.activeCamera = null;
             this.cameras = [];
             this.frameCallback = null;
-            console.log("Camera API disposed");
+            logger.info("Camera API disposed");
         } catch (error) {
             console.error("Error disposing camera API:", error);
         }

@@ -20,8 +20,9 @@ import {
 import type { WebcamManager } from './webcam-manager';
 import type { CameraDevice, WindowPosition } from './types';
 import { createLogger } from './logger';
-
+import { iconBuffer } from '../assets/icons/buffer';
 const logger = createLogger('TrayIcon');
+logger.enabled = false;
 
 // Global references to prevent garbage collection
 let tray: ReturnType<TrayIconBuilder['build']> | null = null;
@@ -339,8 +340,8 @@ export async function runTrayIcon(manager: WebcamManager): Promise<void> {
 
   const controller = new TrayMenuController(manager);
   const menu = controller.getMenu();
-
-  const icon = Icon.fromRgba(generateIconData(), 32, 32);
+  const _icon = await iconBuffer()
+  const icon = Icon.fromRgba(_icon, 32, 32);
 
   tray = new TrayIconBuilder()
     .withTitle('Webcam Manager')

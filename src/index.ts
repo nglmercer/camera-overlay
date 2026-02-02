@@ -12,6 +12,7 @@ import { createLogger } from './logger';
 import { WebcamManager, createWebcamManager } from './webcam-manager';
 
 const logger = createLogger('Main');
+logger.enabled = false;
 
 // Force X11 on Linux for better compatibility
 process.env.GDK_BACKEND = 'x11';
@@ -71,47 +72,11 @@ function setupSignalHandlers(): void {
 }
 
 /**
- * Print usage information
- */
-function printUsage(): void {
-  console.log(`
-Webcam Manager - Usage
-======================
-
-Environment Variables:
-  CAMERA_RESOLUTION=highest|medium|lowest  Set preferred camera resolution
-  GDK_BACKEND=x11                          Force X11 backend (Linux)
-  DEBUG=1                                  Enable debug logging
-
-Keyboard Shortcuts:
-  Ctrl+Shift+C    Toggle camera on/off
-  Ctrl+Shift+H    Hide/Show window
-  Ctrl+Shift+T    Toggle always on top
-  Ctrl+Shift+Home Position window top-left
-  Ctrl+Shift+End  Position window top-right
-  Ctrl+Shift+M    Minimize window
-  Ctrl+Shift+R    Restore window
-
-Tray Icon:
-  Right-click the tray icon for menu options including:
-  - Camera selection
-  - Window positioning
-  - Always on top toggle
-  - Exit
-
-Examples:
-  bun start
-  CAMERA_RESOLUTION=medium bun start
-`);
-}
-
-/**
  * Main application entry point
  */
 async function main(): Promise<void> {
   // Check for help flag
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    printUsage();
     process.exit(0);
   }
 

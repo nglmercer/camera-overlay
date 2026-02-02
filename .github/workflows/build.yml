@@ -27,6 +27,31 @@ on:
           - darwin-x64
           - darwin-x64-baseline
           - darwin-arm64
+      release_tag:
+        description: "Release tag (e.g., v1.0.0). Leave empty to skip creating a release."
+        required: false
+        default: ""
+        type: string
+      draft:
+        description: "Create as draft release"
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        default: false
+        type: boolean
+      generate_notes:
+        description: "Auto-generate release notes"
+        required: false
+        default: true
+        type: boolean
+      release_notes:
+        description: "Custom release notes (only used if auto-generate is false)"
+        required: false
+        default: ""
+        type: string
 
 env:
   APP_NAME: webcam-manager
@@ -189,7 +214,12 @@ jobs:
   release:
     needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: |
+      always() &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
+      (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
+      (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != '')
     permissions:
       contents: write
     steps:
@@ -199,13 +229,65 @@ jobs:
           path: ./artifacts
           merge-multiple: true
 
+      - name: Determine release tag
+        id: release_info
+        run: |
+          if [ "${{ github.event.inputs.release_tag }}" != "" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
+            echo "name=Release ${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "name=Release ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine prerelease status
+        id: prerelease_check
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "is_prerelease=${{ github.event.inputs.prerelease }}" >> $GITHUB_OUTPUT
+          else
+            if [[ "${{ github.ref_name }}" =~ (alpha|beta|rc) ]]; then
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            else
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Determine draft status
+        id: draft_check
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "is_draft=${{ github.event.inputs.draft }}" >> $GITHUB_OUTPUT
+          else
+            echo "is_draft=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine release notes
+        id: notes_check
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.generate_notes }}" == "true" ]; then
+              echo "generate_notes=true" >> $GITHUB_OUTPUT
+              echo "body=" >> $GITHUB_OUTPUT
+            else
+              echo "generate_notes=false" >> $GITHUB_OUTPUT
+              echo "body=${{ github.event.inputs.release_notes }}" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "generate_notes=true" >> $GITHUB_OUTPUT
+            echo "body=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.name }}
           files: ./artifacts/**/*
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          generate_release_notes: ${{ steps.notes_check.outputs.generate_notes == 'true' }}
+          body: ${{ steps.notes_check.outputs.body }}
+          draft: ${{ steps.draft_check.outputs.is_draft == 'true' }}
+          prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

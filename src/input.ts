@@ -8,6 +8,7 @@ import type { InputEvent, InputConfig } from './types';
 import { createLogger } from './logger';
 
 const logger = createLogger('Input');
+logger.enabled = false;
 
 /**
  * Parse a key combination string (e.g., "Ctrl+Shift+C")
@@ -83,7 +84,7 @@ export class InputManager {
     }).sort()
 
     this.shortcuts.set(normalizedParts.join(','), callback)
-    console.log(`Registered shortcut: ${combo}`)
+    logger.info(`Registered shortcut: ${combo}`)
   }
 
   private checkShortcuts() {

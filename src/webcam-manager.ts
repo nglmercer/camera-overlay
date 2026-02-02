@@ -12,8 +12,8 @@ import { WindowManager } from './window-manager';
 import { InputManager,DEFAULT_SHORTCUTS } from './input';
 import { runTrayIcon, stopTrayIcon, setOnExitCallback } from './trayicon';
 import type { AppConfig, CameraDevice, WindowPosition } from './types';
-
 const logger = createLogger('WebcamManager');
+logger.enabled = false;
 
 /**
  * Webcam Manager - Main application controller
@@ -97,6 +97,7 @@ export class WebcamManager {
       .withResizable(windowConfig.resizable)
       .withDecorated(windowConfig.decorated)
       .withVisible(windowConfig.visible)
+      .withAlwaysOnTop(windowConfig.alwaysOnTop)
       .withFocused(true);
 
     this.window = builder.build(this.eventLoop);

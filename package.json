@@ -36,6 +36,7 @@
     "clean": "rm -rf dist node_modules/.cache"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "nokhwa-node": "^0.1.6",
     "rdev-node": "^1.0.1",
     "tray-icon-node": "^0.1.1",

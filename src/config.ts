@@ -11,7 +11,7 @@ import type { AppConfig, WindowConfig, CameraConfig, InputConfig, AppState } fro
 import { createLogger } from './logger';
 
 const logger = createLogger('Config');
-
+logger.enabled = false;
 const CONFIG_VERSION = '1.0.0';
 
 // Default window config with 16:9 aspect ratio

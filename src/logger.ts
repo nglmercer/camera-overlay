@@ -23,9 +23,11 @@ export interface LogEntry {
 
 class Logger {
   private context: string
+  public enabled: boolean
 
   constructor(context: string = 'App') {
     this.context = context
+    this.enabled = true
   }
 
   /**
@@ -75,6 +77,7 @@ class Logger {
    * Create and log an entry
    */
   private log(level: LogLevel, message: string, data?: Record<string, any>): void {
+    if (!this.enabled)return;
     const entry: LogEntry = {
       level,
       timestamp: this.getTimestamp(),

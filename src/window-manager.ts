@@ -8,6 +8,7 @@ import type { WindowConfig, WindowPosition, WindowState, WindowBounds } from './
 import { createLogger } from './logger';
 import { getDisplaySize } from 'rdev-node';
 const logger = createLogger('WindowManager');
+logger.enabled = false;
 
 /**
  * Get screen dimensions (fallback values)
