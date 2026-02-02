@@ -135,10 +135,10 @@ class Logger {
    * Print section separator
    */
   section(title: string): void {
-    const line = '═'.repeat(60)
-    console.log(`\n${line}`)
-    console.log(`  ${title}`)
-    console.log(`${line}\n`)
+    const line = '-'.repeat(5)
+    console.log(``)
+    console.log(`${line}  ${title}  ${line}`)
+    console.log(``)
   }
 
   /**
