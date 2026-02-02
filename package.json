@@ -1,6 +1,6 @@
 {
   "name": "webcam-manager",
-  "version": "1.0.0",
+  "version": "0.0.2",
   "description": "A desktop webcam manager with system tray integration, global shortcuts, and customizable window positioning",
   "main": "src/index.ts",
   "module": "src/index.ts",
@@ -31,7 +31,7 @@
   "scripts": {
     "start": "bun ./src/index.ts",
     "dev": "bun --watch ./src/index.ts",
-    "build": "tsc --noEmit && bun build --compile ./src/index.ts --outfile ./dist/webcam-manager",
+    "build": "bun ./build/build.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist node_modules/.cache"
   },
