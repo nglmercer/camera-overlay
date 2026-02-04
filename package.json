@@ -37,9 +37,9 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
-    "nokhwa-node": "^0.1.6",
+    "nokhwa-node": "^0.1.8",
     "rdev-node": "^1.0.1",
     "tray-icon-node": "^0.1.1",
-    "webview-napi": "^0.1.8"
+    "webview-napi": "^0.1.9"
   }
 }
