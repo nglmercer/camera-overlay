@@ -53,7 +53,7 @@ async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {
     let stream = BroadcastStream::new(rx).filter_map(|r| {
         match r {
             Ok(frame) => Some(Ok::<Bytes, std::convert::Infallible>(frame.mjpeg_part.clone())),
-            Err(_) => None,
+            Err(_) => Some(Ok::<Bytes, std::convert::Infallible>(Bytes::new())),
         }
     });
 

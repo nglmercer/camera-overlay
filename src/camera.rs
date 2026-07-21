@@ -320,6 +320,12 @@ fn get_rss_kb() -> Option<usize> {
     None
 }
 
+impl Default for CameraController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CameraController {
     pub fn new() -> Self {
         Self {

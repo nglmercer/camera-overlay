@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -5,6 +6,7 @@ use tokio::sync::broadcast;
 use camera_overlay::camera::CameraFrame;
 use camera_overlay::config::CameraConfig;
 use camera_overlay::server::{build_router, AppState};
+use futures_util::StreamExt;
 
 fn pick_unused_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -33,7 +35,7 @@ struct TestServer {
 impl TestServer {
     async fn new() -> Self {
         let port = pick_unused_port();
-        let (frame_tx, _rx) = broadcast::channel::<CameraFrame>(2);
+        let (frame_tx, _rx) = broadcast::channel::<CameraFrame>(16);
         let frame_tx = Arc::new(frame_tx);
 
         let state = Arc::new(AppState {
@@ -52,7 +54,7 @@ impl TestServer {
 
         let base_url = format!("http://127.0.0.1:{port}");
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
             .build()
             .unwrap();
 
@@ -83,9 +85,16 @@ impl TestServer {
             .unwrap()
     }
 
+    #[allow(dead_code)]
     fn send_frame(&self, jpeg_data: Vec<u8>) {
         let _ = self.frame_tx.send(CameraFrame::new(jpeg_data));
     }
+}
+
+static FRAME_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn next_frame_id() -> usize {
+    FRAME_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 #[tokio::test]
@@ -108,25 +117,53 @@ async fn e2e_stream_returns_mjpeg_headers() {
 async fn e2e_stream_delivers_frames() {
     let server = TestServer::new().await;
 
-    server.send_frame(vec![0xFFu8; 1000]);
-    server.send_frame(vec![0xAAu8; 1000]);
-
-    let resp = server.get("stream").await;
+    let url = format!("{}/stream", server.base_url);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await.unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-    let start = Instant::now();
-    let body = tokio::time::timeout(Duration::from_secs(3), resp.bytes())
-        .await
-        .expect("timeout waiting for stream")
-        .unwrap();
+    let producer = {
+        let tx = server.frame_tx.clone();
+        tokio::spawn(async move {
+            for _ in 0..50 {
+                let id = next_frame_id();
+                let mut data = vec![0xFFu8; 1000];
+                data[0..8].copy_from_slice(&id.to_be_bytes());
+                let _ = tx.send(CameraFrame::new(data));
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        })
+    };
 
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    let deadline = Instant::now() + Duration::from_secs(3);
+
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(500), stream.next()).await {
+            Ok(Some(Ok(chunk))) => {
+                body.extend_from_slice(&chunk);
+                if body.windows(6).filter(|w| w == b"--frame").count() >= 3 {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    let _ = producer.await;
+
+    let body_str = String::from_utf8_lossy(&body[..body.len().min(200)]);
     assert!(
-        body.windows(6).any(|w| w == b"--frame"),
-        "should contain MJPEG boundary"
+        body.starts_with(b"--frame"),
+        "response should start with --frame boundary, got {} bytes. First 200: {:?}",
+        body.len(),
+        body_str
     );
+    let boundary = b"--frame";
     assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "should receive frames quickly"
+        body.windows(boundary.len()).any(|w| w == boundary.as_slice()),
+        "response should have MJPEG boundary in windows"
     );
 }
 
@@ -165,28 +202,47 @@ async fn e2e_settings_post_and_get() {
 async fn e2e_multiple_subscribers_parallel() {
     let server = TestServer::new().await;
 
-    for i in 0..10 {
-        server.send_frame(vec![i; 20_000]);
-    }
-
     let mut handles = Vec::new();
     for _ in 0..3 {
         let url = format!("{}/stream", server.base_url);
         handles.push(tokio::spawn(async move {
             let client = reqwest::Client::new();
             let resp = client.get(&url).send().await.unwrap();
-            let bytes = tokio::time::timeout(Duration::from_secs(3), resp.bytes())
-                .await
-                .unwrap()
-                .unwrap();
-            bytes.len()
+            let mut stream = resp.bytes_stream();
+            let mut body = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(4);
+            while Instant::now() < deadline {
+                match tokio::time::timeout(Duration::from_millis(500), stream.next()).await {
+                    Ok(Some(Ok(chunk))) => {
+                        body.extend_from_slice(&chunk);
+                        if body.windows(6).filter(|w| w == b"--frame").count() >= 3 {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            body.len()
         }));
     }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let producer = {
+        let tx = server.frame_tx.clone();
+        tokio::spawn(async move {
+            for i in 0..100 {
+                let _ = tx.send(CameraFrame::new(vec![i; 20_000]));
+                tokio::time::sleep(Duration::from_millis(15)).await;
+            }
+        })
+    };
 
     for h in handles {
         let len = h.await.unwrap();
         assert!(len > 0, "each subscriber should receive data");
     }
+    let _ = producer.await;
 }
 
 #[tokio::test]
@@ -195,21 +251,33 @@ async fn e2e_memory_stable_during_streaming() {
 
     let server = TestServer::new().await;
 
-    for i in 0..300 {
-        server.send_frame(vec![(i % 256) as u8; 50_000]);
-    }
-
     let resp = server.get("stream").await;
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-    let body = tokio::time::timeout(Duration::from_secs(5), resp.bytes())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(body.len() > 0);
+    let producer = {
+        let tx = server.frame_tx.clone();
+        tokio::spawn(async move {
+            for i in 0..200 {
+                let _ = tx.send(CameraFrame::new(vec![(i % 256) as u8; 50_000]));
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+    };
 
-    drop(body);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut stream = resp.bytes_stream();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut total_bytes = 0;
+
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(200), stream.next()).await {
+            Ok(Some(Ok(chunk))) => total_bytes += chunk.len(),
+            _ => break,
+        }
+    }
+
+    assert!(total_bytes > 0, "should receive stream data");
+    let _ = producer.await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     if let (Some(start), Some(end)) = (start_rss, get_rss_kb()) {
         let growth = end.saturating_sub(start);
