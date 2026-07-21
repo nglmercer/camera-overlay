@@ -8,7 +8,6 @@ use nokhwa::{
     },
     Camera,
 };
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -19,21 +18,13 @@ use tokio::sync::broadcast;
 
 use crate::config::ResolutionPreference;
 
-static RUNNING: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
-static THREAD_HANDLE: Lazy<Arc<Mutex<Option<thread::JoinHandle<()>>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(None)));
-/// Guards against concurrent `/start` calls: `RUNNING` is only set after a blocking
-/// device probe, so without this two parallel starts both pass the running check and
-/// spawn duplicate capture threads (only one thread handle is kept — the other leaks).
-static STARTING: AtomicBool = AtomicBool::new(false);
-
-/// Clears [`STARTING`] when the start attempt ends on any path (including early
+/// Clears the per-controller starting flag when the start attempt ends on any path (including early
 /// returns), so a failed start never blocks future attempts.
-struct StartingGuard;
+struct StartingGuard<'a>(&'a AtomicBool);
 
-impl Drop for StartingGuard {
+impl Drop for StartingGuard<'_> {
     fn drop(&mut self) {
-        STARTING.store(false, Ordering::SeqCst);
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -93,6 +84,12 @@ impl CameraFrame {
 
 pub struct CameraController {
     latest: Arc<Mutex<Option<CameraFrame>>>,
+    running: Arc<AtomicBool>,
+    starting: AtomicBool,
+    stopping: AtomicBool,
+    cancel_start: AtomicBool,
+    thread_handle: Mutex<Option<thread::JoinHandle<()>>>,
+    operation_lock: Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -412,9 +409,10 @@ mod tests {
 
     #[test]
     fn test_is_running_false_by_default() {
-        // Other tests may leave RUNNING true if they open a camera; only assert API exists.
         let c = CameraController::new();
-        let _ = c.is_running();
+        assert!(!c.is_running());
+        assert!(!c.is_starting());
+        assert!(!c.is_stopping());
     }
 }
 
@@ -459,11 +457,25 @@ impl CameraController {
     pub fn new() -> Self {
         Self {
             latest: Arc::new(Mutex::new(None)),
+            running: Arc::new(AtomicBool::new(false)),
+            starting: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            cancel_start: AtomicBool::new(false),
+            thread_handle: Mutex::new(None),
+            operation_lock: Mutex::new(()),
         }
     }
 
     pub fn is_running(&self) -> bool {
-        RUNNING.load(Ordering::SeqCst)
+        self.running.load(Ordering::SeqCst)
+    }
+
+    pub fn is_starting(&self) -> bool {
+        self.starting.load(Ordering::SeqCst)
+    }
+
+    pub fn is_stopping(&self) -> bool {
+        self.stopping.load(Ordering::SeqCst)
     }
 
     pub fn list_cameras(&self) -> Vec<serde_json::Value> {
@@ -491,17 +503,33 @@ impl CameraController {
         frame_tx: broadcast::Sender<CameraFrame>,
         config: CameraConfigSnapshot,
     ) -> Result<(), String> {
-        if RUNNING.load(Ordering::SeqCst) {
-            return Ok(());
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("Camera stop already in progress".to_string());
         }
 
-        // Serialize concurrent starts: `RUNNING` is only set after the blocking
+        // Serialize concurrent starts: `running` is only set after the blocking
         // device probe below, so without this guard two parallel /start requests
         // both pass the check above and spawn duplicate capture threads.
-        if STARTING.swap(true, Ordering::SeqCst) {
+        if self.starting.swap(true, Ordering::SeqCst) {
             return Err("Camera start already in progress".to_string());
         }
-        let _starting = StartingGuard;
+        let _starting = StartingGuard(&self.starting);
+        self.cancel_start.store(false, Ordering::SeqCst);
+
+        // Start and stop must not take the camera thread handle at the same time.
+        // Stop records cancellation before waiting for this lock, so a start that
+        // is probing a device can still be cancelled safely.
+        let _operation = self.operation_lock.lock();
+
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("Camera stop already in progress".to_string());
+        }
+        if self.running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        if self.cancel_start.load(Ordering::SeqCst) {
+            return Err("Camera start cancelled".to_string());
+        }
 
         // Ensure any previous thread has fully exited before starting a new one.
         self.join_camera_thread();
@@ -521,10 +549,15 @@ impl CameraController {
         let target_fps = config.target_fps.clamp(1, 120);
         drop(temp);
 
+        if self.cancel_start.load(Ordering::SeqCst) {
+            return Err("Camera start cancelled".to_string());
+        }
+
         let latest = Arc::clone(&self.latest);
+        let running = Arc::clone(&self.running);
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
-        RUNNING.store(true, Ordering::SeqCst);
+        running.store(true, Ordering::SeqCst);
 
         let handle = thread::spawn(move || {
             let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(best));
@@ -534,7 +567,7 @@ impl CameraController {
                 Err(e) => {
                     let msg = format!("Failed to create camera {idx}: {e}");
                     log::error!("{msg}");
-                    RUNNING.store(false, Ordering::SeqCst);
+                    running.store(false, Ordering::SeqCst);
                     let _ = ready_tx.send(Err(msg));
                     return;
                 }
@@ -543,7 +576,7 @@ impl CameraController {
             if let Err(e) = camera.open_stream() {
                 let msg = format!("Failed to open stream on camera {idx}: {e}");
                 log::error!("{msg}");
-                RUNNING.store(false, Ordering::SeqCst);
+                running.store(false, Ordering::SeqCst);
                 let _ = ready_tx.send(Err(msg));
                 return;
             }
@@ -561,7 +594,7 @@ impl CameraController {
             let max_consecutive_errors = target_fps.saturating_mul(5).max(30);
             let mut consecutive_errors = 0u32;
 
-            while RUNNING.load(Ordering::SeqCst) {
+            while running.load(Ordering::SeqCst) {
                 let elapsed = last.elapsed();
                 if elapsed < frame_interval {
                     thread::sleep(frame_interval - elapsed);
@@ -584,7 +617,7 @@ impl CameraController {
                             log::error!(
                                 "Camera {idx} failed {consecutive_errors} times in a row, stopping capture"
                             );
-                            RUNNING.store(false, Ordering::SeqCst);
+                            running.store(false, Ordering::SeqCst);
                             break;
                         }
                         continue;
@@ -617,10 +650,11 @@ impl CameraController {
             }
 
             let _ = camera.stop_stream();
+            running.store(false, Ordering::SeqCst);
             log::info!("Camera stream stopped");
         });
 
-        *THREAD_HANDLE.lock() = Some(handle);
+        *self.thread_handle.lock() = Some(handle);
 
         match ready_rx.recv_timeout(Duration::from_secs(8)) {
             Ok(Ok(())) => Ok(()),
@@ -629,7 +663,7 @@ impl CameraController {
                 Err(e)
             }
             Err(_) => {
-                RUNNING.store(false, Ordering::SeqCst);
+                self.running.store(false, Ordering::SeqCst);
                 self.join_camera_thread();
                 Err(format!(
                     "Timed out waiting for camera {idx} to start streaming"
@@ -639,13 +673,18 @@ impl CameraController {
     }
 
     pub fn stop(&self) {
-        RUNNING.store(false, Ordering::SeqCst);
+        self.stopping.store(true, Ordering::SeqCst);
+        self.cancel_start.store(true, Ordering::SeqCst);
+        self.running.store(false, Ordering::SeqCst);
+
+        let _operation = self.operation_lock.lock();
         self.join_camera_thread();
         *self.latest.lock() = None;
+        self.stopping.store(false, Ordering::SeqCst);
     }
 
     fn join_camera_thread(&self) {
-        let handle = THREAD_HANDLE.lock().take();
+        let handle = self.thread_handle.lock().take();
         if let Some(h) = handle {
             let _ = h.join();
         }

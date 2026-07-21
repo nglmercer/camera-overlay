@@ -1,14 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     Icon, TrayIconBuilder,
 };
 
+use crate::camera::CameraController;
 use crate::server::AppState;
-
-static CAMERA_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn make_icon() -> Icon {
     const ICON_PNG: &[u8] = include_bytes!("../assets/tray-icon.png");
@@ -62,35 +61,33 @@ pub fn create_tray(state: Arc<AppState>, port: u16) -> Result<(), Box<dyn std::e
         let quit_clone = quit.clone();
         let state_clone = Arc::clone(&state);
 
-        glib::idle_add_local(move || {
+        // Polling at a modest interval keeps the GTK loop responsive without the
+        // 100%-CPU idle callback that used to run try_recv() continuously.
+        glib::timeout_add_local(Duration::from_millis(100), move || {
             while let Ok(event) = MenuEvent::receiver().try_recv() {
                 if event.id() == start_stop_clone.id() {
-                    let running = CAMERA_RUNNING.load(Ordering::SeqCst);
-                    if running {
-                        CAMERA_RUNNING.store(false, Ordering::SeqCst);
-                        start_stop_clone.set_text("Start Camera");
-                        let camera = Arc::clone(&state_clone.camera);
-                        std::thread::spawn(move || {
-                            camera.stop();
-                        });
+                    let camera = Arc::clone(&state_clone.camera);
+                    if camera.is_stopping() {
+                        continue;
+                    }
+
+                    if camera.is_running() || camera.is_starting() {
+                        log::info!("Tray requested camera stop");
+                        std::thread::spawn(move || camera.stop());
                     } else {
-                        CAMERA_RUNNING.store(true, Ordering::SeqCst);
-                        start_stop_clone.set_text("Stop Camera");
-                        let camera = Arc::clone(&state_clone.camera);
                         let frame_tx = state_clone.frame_tx.clone();
-                        let snapshot = crate::camera::CameraConfigSnapshot {
-                            camera_index: state_clone
-                                .config
-                                .lock()
-                                .selected_camera_index
-                                .unwrap_or(0),
-                            resolution: state_clone.config.lock().resolution.clone(),
-                            target_fps: state_clone.config.lock().target_fps,
+                        let snapshot = {
+                            let config = state_clone.config.lock();
+                            crate::camera::CameraConfigSnapshot {
+                                camera_index: config.selected_camera_index.unwrap_or(0),
+                                resolution: config.resolution.clone(),
+                                target_fps: config.target_fps,
+                            }
                         };
+                        log::info!("Tray requested camera start");
                         std::thread::spawn(move || {
-                            if let Err(e) = camera.start(frame_tx, snapshot) {
-                                log::error!("Camera start failed: {e}");
-                                CAMERA_RUNNING.store(false, Ordering::SeqCst);
+                            if let Err(error) = camera.start(frame_tx, snapshot) {
+                                log::warn!("Camera start did not complete: {error}");
                             }
                         });
                     }
@@ -104,6 +101,8 @@ pub fn create_tray(state: Arc<AppState>, port: u16) -> Result<(), Box<dyn std::e
                     std::process::exit(0);
                 }
             }
+
+            sync_start_stop_item(&start_stop_clone, &state_clone.camera);
             glib::ControlFlow::Continue
         });
 
@@ -111,6 +110,25 @@ pub fn create_tray(state: Arc<AppState>, port: u16) -> Result<(), Box<dyn std::e
     });
 
     Ok(())
+}
+
+fn sync_start_stop_item(item: &MenuItem, camera: &CameraController) {
+    let (text, enabled) = if camera.is_stopping() {
+        ("Stopping Camera…", false)
+    } else if camera.is_starting() {
+        ("Starting Camera…", true)
+    } else if camera.is_running() {
+        ("Stop Camera", true)
+    } else {
+        ("Start Camera", true)
+    };
+
+    if item.text() != text {
+        item.set_text(text);
+    }
+    if item.is_enabled() != enabled {
+        item.set_enabled(enabled);
+    }
 }
 
 #[cfg(test)]
