@@ -55,25 +55,37 @@ fn default_port() -> u16 {
     8080
 }
 
-fn config_path() -> PathBuf {
+fn config_dir() -> PathBuf {
     let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("camera-overlay");
     let _ = fs::create_dir_all(&dir);
-    dir.join("config.json")
+    dir
+}
+
+fn config_path() -> PathBuf {
+    config_dir().join("config.json")
 }
 
 pub fn load() -> CameraConfig {
-    let path = config_path();
+    load_from(config_path())
+}
+
+pub fn save(config: &CameraConfig) {
+    save_to(config, config_path())
+}
+
+fn load_from(path: PathBuf) -> CameraConfig {
     match fs::read_to_string(&path) {
         Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
         Err(_) => CameraConfig::default(),
     }
 }
 
-pub fn save(config: &CameraConfig) {
-    let path = config_path();
+fn save_to(config: &CameraConfig, path: PathBuf) {
     if let Ok(json) = serde_json::to_string_pretty(config) {
-        let _ = fs::write(&path, json);
+        if let Err(e) = fs::write(&path, json) {
+            log::warn!("Failed to save config to {path:?}: {e}");
+        }
     }
 }
 
@@ -148,6 +160,9 @@ mod tests {
 
     #[test]
     fn test_save_and_load() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("camera-overlay-test-config-{}", std::process::id()));
+
         let config = CameraConfig {
             selected_camera_index: Some(2),
             resolution: ResolutionPreference::Lowest,
@@ -158,8 +173,8 @@ mod tests {
             port: 7777,
         };
 
-        save(&config);
-        let loaded = load();
+        save_to(&config, path.clone());
+        let loaded = load_from(path.clone());
 
         assert_eq!(loaded.selected_camera_index, config.selected_camera_index);
         assert!(matches!(loaded.resolution, ResolutionPreference::Lowest));
@@ -168,5 +183,7 @@ mod tests {
         assert_eq!(loaded.target_fps, 15);
         assert!(loaded.auto_start);
         assert_eq!(loaded.port, 7777);
+
+        let _ = std::fs::remove_file(path);
     }
 }

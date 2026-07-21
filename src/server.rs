@@ -10,7 +10,7 @@ use bytes::Bytes;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{self, CorsLayer};
 
 use crate::camera::{CameraController, CameraFrame};
 use crate::config::CameraConfig;
@@ -33,7 +33,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(serve_index))
         .route("/config", get(serve_config))
         .route("/ws", get(ws_stream))
-        .route("/webrtc/offer", post(crate::webrtc_signaling::webrtc_offer))
         .route("/settings", get(get_config).post(set_config))
         .route("/cameras", get(list_cameras))
         .route("/status", get(camera_status))
@@ -65,7 +64,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             rl.clone(),
             rate_limit_middleware,
         ))
-        .layer(CorsLayer::permissive())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(cors::AllowOrigin::predicate(|origin, _| {
+                    origin.as_bytes().starts_with(b"http://localhost")
+                        || origin.as_bytes().starts_with(b"http://127.0.0.1")
+                }))
+                .allow_methods(cors::Any)
+                .allow_headers(cors::Any),
+        )
         .with_state(state)
 }
 
@@ -117,8 +124,12 @@ async fn set_config(
     State(state): State<Arc<AppState>>,
     axum::Json(config): axum::Json<CameraConfig>,
 ) -> StatusCode {
-    *state.config.lock() = config;
-    crate::config::save(&state.config.lock());
+    let saved = {
+        let mut guard = state.config.lock();
+        *guard = config;
+        guard.clone()
+    };
+    crate::config::save(&saved);
     StatusCode::OK
 }
 

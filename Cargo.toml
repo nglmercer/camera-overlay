@@ -22,7 +22,6 @@ bytes = "1"
 tokio-stream = { version = "0.1", features = ["sync"] }
 governor = "0.8"
 nonzero_ext = "0.3"
-webrtc = "0.12"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

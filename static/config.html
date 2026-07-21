@@ -284,15 +284,12 @@
 
         <!-- Live Preview -->
         <div class="card preview">
-            <h2>Live Preview (WebRTC / WebSocket Low Latency)</h2>
-            <!-- Primary: WebRTC video -->
-            <video id="preview-video" autoplay muted playsinline style="display: none;"></video>
-            <!-- Fallback: WebSocket canvas -->
+            <h2>Live Preview</h2>
             <canvas id="preview-canvas" style="display: none;"></canvas>
             <div id="preview-placeholder" class="preview-placeholder">
                 Camera is off — click Start Camera above
             </div>
-            <p class="hint" style="margin-top: 12px;">Preview uses WebRTC (H264 RTP) for sub-frame latency, with WebSocket canvas as fallback.</p>
+            <p class="hint" style="margin-top: 12px;">Preview uses WebSocket for low-latency JPEG frame streaming.</p>
         </div>
     </div>
 

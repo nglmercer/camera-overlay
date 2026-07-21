@@ -21,7 +21,7 @@ pub struct RateLimiters {
     /// Limit for control endpoints that mutate state or spawn threads:
     /// `/start`, `/stop`, `/settings` POST.
     pub control: SharedLimiter,
-    /// Limit for data endpoints that hand out frames: `/stream`, `/snapshot`.
+    /// Limit for data endpoints that hand out frames: `/ws`.
     pub data: SharedLimiter,
 }
 
@@ -38,7 +38,7 @@ impl RateLimiters {
             control: Arc::new(RateLimiter::direct(
                 Quota::per_second(nonzero!(5u32)).allow_burst(nonzero!(10u32)),
             )),
-            // 10 req/s for data endpoints (stream/snapshot)
+            // 10 req/s for data endpoints (ws)
             data: Arc::new(RateLimiter::direct(
                 Quota::per_second(nonzero!(10u32)).allow_burst(nonzero!(20u32)),
             )),
@@ -53,7 +53,7 @@ pub async fn rate_limit_middleware(
 ) -> Response {
     let path = request.uri().path();
     let limited = match path {
-        "/start" | "/stop" | "/webrtc/offer" => Some(&rate_limiters.control),
+        "/start" | "/stop" => Some(&rate_limiters.control),
         "/settings" if request.method() == http::Method::POST => Some(&rate_limiters.control),
         "/ws" => Some(&rate_limiters.data),
         _ => None,

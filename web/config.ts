@@ -1,13 +1,11 @@
-import { CanvasStreamRenderer, WebRTCStreamRenderer, CameraConfig, CameraDeviceInfo, CameraStatus, StartResponse } from './overlay';
+import { CanvasStreamRenderer, CameraConfig, CameraDeviceInfo, CameraStatus, StartResponse } from './overlay';
 
 class ConfigApp {
-    private webrtcRenderer: WebRTCStreamRenderer | null = null;
     private wsRenderer: CanvasStreamRenderer | null = null;
     private config: CameraConfig = {};
     private statusPoll: number | null = null;
 
     constructor() {
-        const videoEl = document.getElementById('preview-video') as HTMLVideoElement;
         const canvas = document.getElementById('preview-canvas') as HTMLCanvasElement;
         if (canvas) {
             this.wsRenderer = new CanvasStreamRenderer(canvas);
@@ -61,26 +59,19 @@ class ConfigApp {
     }
 
     private showCanvasPreview(): void {
-        const videoEl = document.getElementById('preview-video') as HTMLVideoElement | null;
         const canvas = document.getElementById('preview-canvas');
         const placeholder = document.getElementById('preview-placeholder');
         if (placeholder) placeholder.style.display = 'none';
-        if (this.webrtcRenderer && videoEl) {
-            videoEl.style.display = 'block';
-            this.webrtcRenderer.start();
-        } else if (this.wsRenderer && canvas) {
+        if (this.wsRenderer && canvas) {
             canvas.style.display = 'block';
             this.wsRenderer.start();
         }
     }
 
     private hidePreview(): void {
-        const videoEl = document.getElementById('preview-video') as HTMLVideoElement | null;
         const canvas = document.getElementById('preview-canvas');
         const placeholder = document.getElementById('preview-placeholder');
-        this.webrtcRenderer?.stop();
         this.wsRenderer?.stop();
-        if (videoEl) videoEl.style.display = 'none';
         if (canvas) canvas.style.display = 'none';
         if (placeholder) placeholder.style.display = 'flex';
     }
