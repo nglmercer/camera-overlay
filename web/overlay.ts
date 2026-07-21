@@ -39,6 +39,7 @@ export class CanvasStreamRenderer {
     private ctx: CanvasRenderingContext2D;
     private ws: WebSocket | null = null;
     private active = false;
+    private onOverlayCommand: ((state: unknown) => void) | null = null;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -47,6 +48,10 @@ export class CanvasStreamRenderer {
             throw new Error('Failed to obtain 2D rendering context');
         }
         this.ctx = context;
+    }
+
+    public setOverlayHandler(handler: (state: unknown) => void): void {
+        this.onOverlayCommand = handler;
     }
 
     public start(): void {
@@ -74,6 +79,16 @@ export class CanvasStreamRenderer {
 
         this.ws.onmessage = async (event: MessageEvent) => {
             if (!this.active) return;
+            if (typeof event.data === 'string') {
+                if (this.onOverlayCommand) {
+                    try {
+                        this.onOverlayCommand(JSON.parse(event.data));
+                    } catch {
+                        // Ignore malformed overlay commands.
+                    }
+                }
+                return;
+            }
             try {
                 const blob = new Blob([event.data as ArrayBuffer], { type: 'image/jpeg' });
                 const bitmap = await createImageBitmap(blob);

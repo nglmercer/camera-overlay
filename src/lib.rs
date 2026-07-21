@@ -14,11 +14,14 @@ const BROADCAST_CAPACITY: usize = 4;
 pub async fn run_server(port: u16) -> std::io::Result<Arc<server::AppState>> {
     let camera = Arc::new(camera::CameraController::new());
     let (frame_tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
+    let (overlay_tx, _overlay_rx) = broadcast::channel::<serde_json::Value>(8);
 
     let state = Arc::new(server::AppState {
         config: parking_lot::Mutex::new(CameraConfig::default()),
         camera: Arc::clone(&camera),
         frame_tx,
+        overlay_tx,
+        overlay_state: parking_lot::Mutex::new(serde_json::Value::Null),
         rate_limiters: crate::rate_limit::RateLimiters::new(),
     });
 

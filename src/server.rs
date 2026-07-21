@@ -20,6 +20,8 @@ pub struct AppState {
     pub config: parking_lot::Mutex<CameraConfig>,
     pub camera: Arc<CameraController>,
     pub frame_tx: broadcast::Sender<CameraFrame>,
+    pub overlay_tx: broadcast::Sender<serde_json::Value>,
+    pub overlay_state: parking_lot::Mutex<serde_json::Value>,
     pub rate_limiters: RateLimiters,
 }
 
@@ -38,6 +40,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/status", get(camera_status))
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
+        .route("/overlay", get(get_overlay).post(set_overlay))
         .nest_service(
             "/chunks",
             tower_http::services::ServeDir::new("static/chunks"),
@@ -89,31 +92,50 @@ async fn serve_config() -> Html<&'static str> {
 }
 
 /// WebSocket binary stream handler.
-/// Emits raw binary JPEG frames directly to WebGL/Canvas clients with skip-to-latest logic.
+/// Emits raw binary JPEG frames and text overlay-control commands to WebSocket clients.
 async fn ws_stream(
     ws: axum::extract::ws::WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let rx = state.frame_tx.subscribe();
+    let frame_rx = state.frame_tx.subscribe();
+    let overlay_rx = state.overlay_tx.subscribe();
     ws.on_upgrade(move |mut socket| async move {
-        let mut rx = rx;
+        let mut frame_rx = frame_rx;
+        let mut overlay_rx = overlay_rx;
         loop {
-            match rx.recv().await {
-                Ok(mut latest) => {
-                    while let Ok(newer) = rx.try_recv() {
-                        latest = newer;
-                    }
-                    let jpeg_bytes = Bytes::from((*latest.jpeg_data).clone());
-                    if socket
-                        .send(axum::extract::ws::Message::Binary(jpeg_bytes))
-                        .await
-                        .is_err()
-                    {
-                        break;
+            tokio::select! {
+                result = overlay_rx.recv() => {
+                    match result {
+                        Ok(cmd) => {
+                            if let Ok(json) = serde_json::to_string(&cmd) {
+                                if socket.send(axum::extract::ws::Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
+                result = frame_rx.recv() => {
+                    match result {
+                        Ok(mut latest) => {
+                            while let Ok(newer) = frame_rx.try_recv() {
+                                latest = newer;
+                            }
+                            let jpeg_bytes = Bytes::from((*latest.jpeg_data).clone());
+                            if socket
+                                .send(axum::extract::ws::Message::Binary(jpeg_bytes))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
             }
         }
     })
@@ -240,6 +262,20 @@ async fn stop_camera(State(state): State<Arc<AppState>>) -> Json<StopResponse> {
     })
 }
 
+async fn get_overlay(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let state = state.overlay_state.lock().clone();
+    (StatusCode::OK, axum::Json(state))
+}
+
+async fn set_overlay(
+    State(state): State<Arc<AppState>>,
+    axum::Json(payload): axum::Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    *state.overlay_state.lock() = payload.clone();
+    let _ = state.overlay_tx.send(payload.clone());
+    (StatusCode::OK, axum::Json(payload))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,10 +287,13 @@ mod tests {
     fn test_state() -> Arc<AppState> {
         let camera = Arc::new(CameraController::new());
         let (frame_tx, _rx) = broadcast::channel(16);
+        let (overlay_tx, _overlay_rx) = broadcast::channel::<serde_json::Value>(8);
         Arc::new(AppState {
             config: parking_lot::Mutex::new(CameraConfig::default()),
             camera,
             frame_tx,
+            overlay_tx,
+            overlay_state: parking_lot::Mutex::new(serde_json::Value::Null),
             rate_limiters: crate::rate_limit::RateLimiters::new(),
         })
     }

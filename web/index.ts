@@ -17,6 +17,7 @@ class OverlayApp {
         window.cameraOverlay = this.api;
         restoreOverlayState(this.api);
         this.applyParams();
+        this.wsRenderer.setOverlayHandler((state) => this.api.set(state as Parameters<typeof this.api.set>[0]));
     }
 
     private applyParams(): void {

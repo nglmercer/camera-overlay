@@ -13,11 +13,14 @@ async fn main() {
     let config = camera_overlay::config::load();
     let camera = Arc::new(camera_overlay::camera::CameraController::new());
     let (frame_tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
+    let (overlay_tx, _overlay_rx) = broadcast::channel::<serde_json::Value>(8);
 
     let state = Arc::new(camera_overlay::server::AppState {
         config: parking_lot::Mutex::new(config.clone()),
         camera: Arc::clone(&camera),
         frame_tx: frame_tx.clone(),
+        overlay_tx,
+        overlay_state: parking_lot::Mutex::new(serde_json::Value::Null),
         rate_limiters: camera_overlay::rate_limit::RateLimiters::new(),
     });
 

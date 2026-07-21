@@ -23,11 +23,14 @@ impl TestServer {
     async fn new() -> Self {
         let port = pick_unused_port();
         let (frame_tx, _rx) = broadcast::channel::<CameraFrame>(32);
+        let (overlay_tx, _overlay_rx) = broadcast::channel::<serde_json::Value>(8);
 
         let state = Arc::new(AppState {
             config: parking_lot::Mutex::new(CameraConfig::default()),
             camera: Arc::new(camera_overlay::camera::CameraController::new()),
             frame_tx,
+            overlay_tx,
+            overlay_state: parking_lot::Mutex::new(serde_json::Value::Null),
             rate_limiters: camera_overlay::rate_limit::RateLimiters::new(),
         });
 
