@@ -171,6 +171,20 @@
             font-size: 14px;
         }
         .nav a:hover { text-decoration: underline; }
+        .error-msg {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            background: #ff475722;
+            border: 1px solid #ff4757;
+            color: #ff8a94;
+            font-size: 13px;
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .error-msg.visible { display: block; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -192,6 +206,7 @@
             <div class="btn-row">
                 <button class="btn btn-primary" onclick="refreshSnapshot()">Refresh Snapshot</button>
             </div>
+            <div id="error-msg" class="error-msg" role="alert"></div>
         </div>
 
         <!-- Camera Selection -->
@@ -285,11 +300,53 @@
         let config = {};
         let running = false;
         let currentObjectUrl = null;
+        let previewMode = null; // 'stream' | 'snapshot' | null
+        let statusPoll = null;
 
         async function init() {
             await loadConfig();
             await loadCameras();
             syncForm();
+            await refreshStatus();
+            statusPoll = setInterval(refreshStatus, 5000);
+        }
+
+        function setError(msg) {
+            const el = document.getElementById('error-msg');
+            if (!msg) {
+                el.textContent = '';
+                el.classList.remove('visible');
+                return;
+            }
+            el.textContent = msg;
+            el.classList.add('visible');
+        }
+
+        function setRunningUi(isOn) {
+            running = isOn;
+            const badge = document.getElementById('status-badge');
+            badge.textContent = isOn ? 'ON' : 'OFF';
+            badge.className = isOn ? 'status status-on' : 'status status-off';
+        }
+
+        function showStreamPreview() {
+            revokeCurrentUrl();
+            const img = document.getElementById('preview-img');
+            // Bust cache and force a fresh multipart connection
+            img.removeAttribute('src');
+            img.src = `/stream?t=${Date.now()}`;
+            img.style.display = 'block';
+            document.getElementById('preview-placeholder').style.display = 'none';
+            previewMode = 'stream';
+        }
+
+        function hidePreview() {
+            const img = document.getElementById('preview-img');
+            img.removeAttribute('src');
+            img.style.display = 'none';
+            revokeCurrentUrl();
+            document.getElementById('preview-placeholder').style.display = 'flex';
+            previewMode = null;
         }
 
         function revokeCurrentUrl() {
@@ -309,6 +366,13 @@
             const cameras = await r.json();
             const sel = document.getElementById('camera-select');
             sel.innerHTML = '';
+            if (!cameras.length) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No cameras found';
+                sel.appendChild(opt);
+                return;
+            }
             cameras.forEach(c => {
                 const opt = document.createElement('option');
                 opt.value = c.index;
@@ -316,7 +380,9 @@
                 sel.appendChild(opt);
             });
             if (config.selected_camera_index != null) {
-                sel.value = config.selected_camera_index;
+                sel.value = String(config.selected_camera_index);
+            } else {
+                config.selected_camera_index = parseInt(sel.value, 10) || 0;
             }
         }
 
@@ -351,6 +417,8 @@
             config.mirror_vertical = document.getElementById('mirror-v').checked;
             config.auto_start = document.getElementById('auto-start').checked;
             config.target_fps = parseInt(document.getElementById('fps').value) || 30;
+            const cam = document.getElementById('camera-select').value;
+            if (cam !== '') config.selected_camera_index = parseInt(cam, 10);
 
             await fetch('/settings', {
                 method: 'POST',
@@ -360,36 +428,69 @@
         }
 
         function selectCamera(index) {
-            config.selected_camera_index = parseInt(index);
+            config.selected_camera_index = parseInt(index, 10);
             updateConfig();
         }
 
+        async function refreshStatus() {
+            try {
+                const r = await fetch('/status');
+                if (!r.ok) return;
+                const s = await r.json();
+                setRunningUi(!!s.running);
+                if (s.running && previewMode !== 'stream' && previewMode !== 'snapshot') {
+                    showStreamPreview();
+                }
+                if (!s.running && previewMode === 'stream') {
+                    hidePreview();
+                }
+            } catch (_) { /* ignore poll errors */ }
+        }
+
         async function startCamera() {
-            await fetch('/start', { method: 'POST' });
-            running = true;
-            document.getElementById('status-badge').textContent = 'ON';
-            document.getElementById('status-badge').className = 'status status-on';
-            revokeCurrentUrl();
-            const img = document.getElementById('preview-img');
-            img.src = '';
-            img.src = `/stream#${Date.now()}`;
-            img.style.display = 'block';
-            document.getElementById('preview-placeholder').style.display = 'none';
+            setError('');
+            const btn = document.getElementById('btn-start');
+            btn.disabled = true;
+            try {
+                await updateConfig();
+                const r = await fetch('/start', { method: 'POST' });
+                let body = {};
+                try { body = await r.json(); } catch (_) {}
+                if (!r.ok || body.ok === false) {
+                    setRunningUi(false);
+                    hidePreview();
+                    setError(body.error || `Start failed (HTTP ${r.status})`);
+                    return;
+                }
+                setRunningUi(true);
+                // Wait briefly for first frame so <img> is less likely to hang empty
+                for (let i = 0; i < 20; i++) {
+                    const st = await fetch('/status');
+                    if (st.ok) {
+                        const s = await st.json();
+                        if (s.has_frame) break;
+                    }
+                    await new Promise(res => setTimeout(res, 100));
+                }
+                showStreamPreview();
+            } catch (e) {
+                setRunningUi(false);
+                hidePreview();
+                setError(String(e.message || e));
+            } finally {
+                btn.disabled = false;
+            }
         }
 
         async function stopCamera() {
+            setError('');
             await fetch('/stop', { method: 'POST' });
-            running = false;
-            document.getElementById('status-badge').textContent = 'OFF';
-            document.getElementById('status-badge').className = 'status status-off';
-            const img = document.getElementById('preview-img');
-            img.src = '';
-            img.style.display = 'none';
-            revokeCurrentUrl();
-            document.getElementById('preview-placeholder').style.display = 'flex';
+            setRunningUi(false);
+            hidePreview();
         }
 
         async function refreshSnapshot() {
+            setError('');
             const r = await fetch('/snapshot');
             if (r.ok) {
                 const blob = await r.blob();
@@ -397,10 +498,14 @@
                 const url = URL.createObjectURL(blob);
                 currentObjectUrl = url;
                 const img = document.getElementById('preview-img');
-                img.src = '';
+                img.removeAttribute('src');
                 img.src = url;
                 img.style.display = 'block';
                 document.getElementById('preview-placeholder').style.display = 'none';
+                previewMode = 'snapshot';
+            } else {
+                const text = await r.text();
+                setError(text || `Snapshot unavailable (HTTP ${r.status}). Start the camera first.`);
             }
         }
 
@@ -411,8 +516,10 @@
         }
 
         window.addEventListener('beforeunload', () => {
+            if (statusPoll) clearInterval(statusPoll);
             revokeCurrentUrl();
-            document.getElementById('preview-img').src = '';
+            const img = document.getElementById('preview-img');
+            img.removeAttribute('src');
         });
 
         init();

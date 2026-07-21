@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-const BROADCAST_CAPACITY: usize = 8;
+/// Bounded ring of recent frames. Slow subscribers lag and skip; capacity is
+/// large enough for a few frames of jitter without dropping every client.
+const BROADCAST_CAPACITY: usize = 16;
 
 #[tokio::main]
 async fn main() {
@@ -25,6 +27,18 @@ async fn main() {
     log::info!("Config:   http://localhost:{port}/config");
     log::info!("Stream:   http://localhost:{port}/stream");
     log::info!("Add the overlay or stream URL as a Browser Source in OBS");
+
+    if config.auto_start {
+        let snapshot = camera_overlay::camera::CameraConfigSnapshot {
+            camera_index: config.selected_camera_index.unwrap_or(0),
+            resolution: config.resolution.clone(),
+            target_fps: config.target_fps,
+        };
+        match camera.start(frame_tx.clone(), snapshot) {
+            Ok(()) => log::info!("Auto-start: camera running"),
+            Err(e) => log::error!("Auto-start failed: {e}"),
+        }
+    }
 
     let app = camera_overlay::server::build_router(state);
     let listener = match tokio::net::TcpListener::bind(&addr).await {

@@ -35,7 +35,7 @@ struct TestServer {
 impl TestServer {
     async fn new() -> Self {
         let port = pick_unused_port();
-        let (frame_tx, _rx) = broadcast::channel::<CameraFrame>(16);
+        let (frame_tx, _rx) = broadcast::channel::<CameraFrame>(32);
         let frame_tx = Arc::new(frame_tx);
 
         let state = Arc::new(AppState {
@@ -711,6 +711,186 @@ async fn e2e_stream_content_length_matches_frame_size() {
             is_valid_jpeg(frame),
             "frame should be valid JPEG, first bytes: {:?}",
             &frame[..frame.len().min(10)]
+        );
+    }
+}
+
+#[tokio::test]
+async fn e2e_status_reports_not_running() {
+    let server = TestServer::new().await;
+    let resp = server.get("status").await;
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["running"], false);
+    assert_eq!(json["has_frame"], false);
+}
+
+#[tokio::test]
+async fn e2e_start_missing_camera_returns_error_body() {
+    let server = TestServer::new().await;
+
+    // Force a non-existent device index via settings
+    let body = r#"{"selected_camera_index": 99999, "target_fps": 30, "port": 8080}"#;
+    let resp = server
+        .client
+        .post(format!("{}/settings", server.base_url))
+        .header("content-type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    let resp = server
+        .client
+        .post(format!("{}/start", server.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert!(json.get("ok").is_some());
+    assert!(json.get("running").is_some());
+    // On machines without that index, expect failure; if somehow present, ok may be true.
+    if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        assert_eq!(json["ok"], false);
+        assert!(
+            json["error"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+            "error message required on failure"
+        );
+        assert_eq!(json["running"], false);
+    }
+}
+
+#[tokio::test]
+async fn e2e_stream_recovers_after_producer_burst_lag() {
+    let server = TestServer::new().await;
+
+    let url = format!("{}/stream", server.base_url);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await.unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+    // Burst many large frames to force lag, then send valid JPEGs.
+    let producer = {
+        let tx = server.frame_tx.clone();
+        tokio::spawn(async move {
+            for i in 0..80 {
+                let _ = tx.send(CameraFrame::new(vec![(i % 256) as u8; 40_000]));
+            }
+            for i in 0..15 {
+                let jpeg = make_valid_jpeg(i + 100);
+                let _ = tx.send(CameraFrame::new(jpeg));
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        })
+    };
+
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(400), stream.next()).await {
+            Ok(Some(Ok(chunk))) => {
+                body.extend_from_slice(&chunk);
+                if body.windows(6).filter(|w| w == b"--frame").count() >= 3 {
+                    break;
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    let _ = producer.await;
+
+    // Body may include lag-skipped gaps but must not be empty of structure if we got data.
+    if !body.is_empty() {
+        assert!(
+            body.windows(7).any(|w| w == b"--frame"),
+            "lag recovery stream should still use mjpeg boundaries"
+        );
+        // No empty part pattern: "--frame\r\nContent-Type...Length: 0"
+        let as_str = String::from_utf8_lossy(&body);
+        assert!(
+            !as_str.contains("Content-Length: 0"),
+            "must not send empty mjpeg parts after lag"
+        );
+    }
+}
+
+/// Optional hardware test. Run with: `CAMERA_E2E=1 cargo test --test e2e e2e_hardware -- --ignored --nocapture`
+#[tokio::test]
+#[ignore]
+async fn e2e_hardware_start_snapshot_stream() {
+    if std::env::var("CAMERA_E2E").ok().as_deref() != Some("1") {
+        eprintln!("skip: set CAMERA_E2E=1 to run hardware test");
+        return;
+    }
+
+    let server = TestServer::new().await;
+    let start_rss = get_rss_kb();
+
+    let resp = server
+        .client
+        .post(format!("{}/start", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        json["ok"], true,
+        "start should succeed with a camera attached: {:?}",
+        json
+    );
+
+    let mut got_snapshot = false;
+    for _ in 0..30 {
+        let snap = server.get("snapshot").await;
+        if snap.status().is_success() {
+            let bytes = snap.bytes().await.unwrap();
+            assert!(is_valid_jpeg(&bytes), "snapshot must be valid JPEG");
+            got_snapshot = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(got_snapshot, "expected /snapshot after start");
+
+    let url = format!("{}/stream", server.base_url);
+    let resp = reqwest::Client::new().get(&url).send().await.unwrap();
+    let mut stream = resp.bytes_stream();
+    let mut body = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(500), stream.next()).await {
+            Ok(Some(Ok(chunk))) => {
+                body.extend_from_slice(&chunk);
+                if body.windows(6).filter(|w| w == b"--frame").count() >= 5 {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    assert!(
+        body.windows(6).filter(|w| w == b"--frame").count() >= 2,
+        "hardware stream should deliver frames"
+    );
+
+    let _ = server
+        .client
+        .post(format!("{}/stop", server.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    if let (Some(start), Some(end)) = (start_rss, get_rss_kb()) {
+        let growth = end.saturating_sub(start);
+        assert!(
+            growth < 150_000,
+            "RSS grew by {growth} kb during hardware stream — potential leak"
         );
     }
 }

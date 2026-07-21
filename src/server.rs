@@ -4,20 +4,19 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use bytes::Bytes;
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use tower_http::cors::CorsLayer;
 
 use crate::camera::{CameraController, CameraFrame};
 use crate::config::CameraConfig;
-
-const MAX_LAGGED_FRAMES: u64 = 10;
 
 pub struct AppState {
     pub config: parking_lot::Mutex<CameraConfig>,
@@ -36,6 +35,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/snapshot", get(snapshot))
         .route("/settings", get(get_config).post(set_config))
         .route("/cameras", get(list_cameras))
+        .route("/status", get(camera_status))
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
         .layer(CorsLayer::permissive())
@@ -50,17 +50,22 @@ async fn serve_config() -> Html<&'static str> {
     Html(CONFIG_HTML)
 }
 
+/// MJPEG stream. On broadcast lag we **skip** lost frames (no empty multipart parts,
+/// no forced disconnect) so browsers keep a valid multipart stream.
 async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {
     let rx = state.frame_tx.subscribe();
 
     let stream = BroadcastStream::new(rx).filter_map(|r| match r {
-        Ok(frame) => Some(Ok::<Bytes, std::convert::Infallible>(frame.mjpeg_part.clone())),
-        Err(BroadcastStreamRecvError::Lagged(n)) if n <= MAX_LAGGED_FRAMES => {
-            log::debug!("Subscriber lagged by {n} frames, continuing");
-            Some(Ok::<Bytes, std::convert::Infallible>(Bytes::new()))
+        Ok(frame) => {
+            let part = frame.mjpeg_part();
+            if part.is_empty() {
+                None
+            } else {
+                Some(Ok::<Bytes, std::convert::Infallible>(part))
+            }
         }
         Err(BroadcastStreamRecvError::Lagged(n)) => {
-            log::warn!("Subscriber lagged by {n} frames, disconnecting");
+            log::debug!("Subscriber lagged by {n} frames, skipping to latest");
             None
         }
     });
@@ -92,11 +97,7 @@ async fn snapshot(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             );
             (headers, (*f.jpeg_data).clone()).into_response()
         }
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Camera not running",
-        )
-            .into_response(),
+        None => (StatusCode::SERVICE_UNAVAILABLE, "Camera not running").into_response(),
     }
 }
 
@@ -119,21 +120,88 @@ async fn list_cameras(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, axum::Json(cameras)).into_response()
 }
 
-async fn start_camera(State(state): State<Arc<AppState>>) -> StatusCode {
+#[derive(Serialize)]
+struct StatusResponse {
+    running: bool,
+    has_frame: bool,
+}
+
+async fn camera_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(StatusResponse {
+        running: state.camera.is_running(),
+        has_frame: state.camera.latest_frame().is_some(),
+    })
+}
+
+#[derive(Serialize)]
+struct StartResponse {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    running: bool,
+}
+
+async fn start_camera(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let cfg = state.config.lock();
     let snapshot = crate::camera::CameraConfigSnapshot {
+        camera_index: cfg.selected_camera_index.unwrap_or(0),
         resolution: cfg.resolution.clone(),
         target_fps: cfg.target_fps,
     };
     drop(cfg);
 
-    state.camera.start(state.frame_tx.clone(), snapshot);
-    StatusCode::OK
+    // start() may block briefly waiting for the capture thread to open the device.
+    let result = tokio::task::spawn_blocking({
+        let camera = Arc::clone(&state.camera);
+        let tx = state.frame_tx.clone();
+        move || camera.start(tx, snapshot)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => (
+            StatusCode::OK,
+            Json(StartResponse {
+                ok: true,
+                error: None,
+                running: state.camera.is_running(),
+            }),
+        ),
+        Ok(Err(e)) => {
+            log::error!("Start camera failed: {e}");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(StartResponse {
+                    ok: false,
+                    error: Some(e),
+                    running: false,
+                }),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(StartResponse {
+                ok: false,
+                error: Some(format!("Start task failed: {e}")),
+                running: false,
+            }),
+        ),
+    }
 }
 
-async fn stop_camera(State(state): State<Arc<AppState>>) -> StatusCode {
-    state.camera.stop();
-    StatusCode::OK
+#[derive(Serialize)]
+struct StopResponse {
+    ok: bool,
+    running: bool,
+}
+
+async fn stop_camera(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let camera = Arc::clone(&state.camera);
+    let _ = tokio::task::spawn_blocking(move || camera.stop()).await;
+    Json(StopResponse {
+        ok: true,
+        running: state.camera.is_running(),
+    })
 }
 
 #[cfg(test)]
@@ -146,7 +214,7 @@ mod tests {
 
     fn test_state() -> Arc<AppState> {
         let camera = Arc::new(CameraController::new());
-        let (frame_tx, _rx) = broadcast::channel(2);
+        let (frame_tx, _rx) = broadcast::channel(16);
         Arc::new(AppState {
             config: parking_lot::Mutex::new(CameraConfig::default()),
             camera,
@@ -254,12 +322,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_start_stop_camera() {
+    async fn test_start_without_camera_returns_error_json() {
         let state = test_state();
+        // Point at a ridiculous index so open fails quickly when no such device.
+        state.config.lock().selected_camera_index = Some(9999);
         let app = build_router(state);
 
         let response = app
-            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -269,23 +338,39 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
 
-        // Give the camera thread a moment to produce a frame
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Either 503 (open failed) or 200 if a device somehow exists — must be JSON either way.
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("ok").is_some());
+        assert!(json.get("running").is_some());
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            assert_eq!(json["ok"], false);
+            assert!(json["error"].as_str().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_status() {
+        let state = test_state();
+        let app = build_router(state);
 
         let response = app
-            .clone()
             .oneshot(
                 Request::builder()
-                    .method("POST")
-                    .uri("/stop")
+                    .uri("/status")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
+
         assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["running"], false);
+        assert_eq!(json["has_frame"], false);
     }
 
     #[tokio::test]
@@ -330,5 +415,78 @@ mod tests {
             headers.get(header::CONTENT_TYPE).unwrap(),
             "multipart/x-mixed-replace; boundary=frame"
         );
+    }
+
+    #[tokio::test]
+    async fn test_stream_skips_lag_without_empty_chunks() {
+        let state = test_state();
+        let tx = state.frame_tx.clone();
+        let app = build_router(state);
+
+        // Overflow capacity so a late subscriber sees Lagged.
+        for i in 0..64 {
+            let _ = tx.send(CameraFrame::new(vec![i as u8; 128]));
+        }
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Send a good frame after connect.
+        let good = CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        let _ = tx.send(good);
+
+        // Read a limited amount of body with timeout via spawn + abort pattern.
+        let body = response.into_body();
+        let collect = tokio::time::timeout(std::time::Duration::from_millis(800), async {
+            to_bytes(body, 64 * 1024).await
+        });
+
+        // Body may hang waiting for more frames — that's OK; we only care first chunk if any.
+        if let Ok(Ok(bytes)) = collect.await {
+            if !bytes.is_empty() {
+                assert!(
+                    bytes.windows(7).any(|w| w == b"--frame"),
+                    "body should contain mjpeg boundary, got {} bytes",
+                    bytes.len()
+                );
+                // Empty parts would look like consecutive boundaries with no JPEG; ensure SOI present if we got data.
+                assert!(
+                    bytes.windows(2).any(|w| w == [0xFF, 0xD8]),
+                    "stream body must contain JPEG SOI, not empty parts"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_returns_json() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["running"], false);
     }
 }

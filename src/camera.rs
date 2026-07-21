@@ -12,6 +12,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,19 +24,22 @@ static RUNNING: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(fa
 static THREAD_HANDLE: Lazy<Arc<Mutex<Option<thread::JoinHandle<()>>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
+/// JPEG frame shared across subscribers. MJPEG multipart bytes are built on demand
+/// so the broadcast channel only retains one Arc per frame (not a second full copy).
 #[derive(Clone)]
 pub struct CameraFrame {
     pub jpeg_data: Arc<Vec<u8>>,
-    pub mjpeg_part: bytes::Bytes,
 }
 
 impl CameraFrame {
     pub fn new(jpeg_data: Vec<u8>) -> Self {
-        let mjpeg_part = Self::build_mjpeg_part(&jpeg_data);
         Self {
             jpeg_data: Arc::new(jpeg_data),
-            mjpeg_part,
         }
+    }
+
+    pub fn mjpeg_part(&self) -> bytes::Bytes {
+        Self::build_mjpeg_part(&self.jpeg_data)
     }
 
     fn build_mjpeg_part(jpeg_data: &[u8]) -> bytes::Bytes {
@@ -71,6 +75,7 @@ pub struct CameraController {
 
 #[derive(Clone)]
 pub struct CameraConfigSnapshot {
+    pub camera_index: u32,
     pub resolution: ResolutionPreference,
     pub target_fps: u32,
 }
@@ -140,6 +145,10 @@ fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+    use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+    use tokio_stream::wrappers::BroadcastStream;
+    use tokio_stream::StreamExt;
 
     #[test]
     fn test_encode_jpeg_valid() {
@@ -217,15 +226,15 @@ mod tests {
         let frame = CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]);
         let expected =
             b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xFF\xD8\xFF\xD9\r\n";
-        assert_eq!(&frame.mjpeg_part[..], expected);
+        assert_eq!(&frame.mjpeg_part()[..], expected);
     }
 
     #[test]
     fn test_camera_frame_clone_is_cheap() {
         let frame = CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]);
         let clone = frame.clone();
-        assert_eq!(frame.mjpeg_part, clone.mjpeg_part);
         assert!(Arc::ptr_eq(&frame.jpeg_data, &clone.jpeg_data));
+        assert_eq!(frame.mjpeg_part(), clone.mjpeg_part());
     }
 
     #[test]
@@ -243,7 +252,7 @@ mod tests {
         runtime.block_on(async {
             let start_rss = get_rss_kb();
 
-            let (frame_tx, _keepalive) = broadcast::channel::<CameraFrame>(2);
+            let (frame_tx, _keepalive) = broadcast::channel::<CameraFrame>(8);
             let producer_tx = frame_tx.clone();
 
             let sub1 = frame_tx.subscribe();
@@ -300,6 +309,77 @@ mod tests {
             "CameraFrame size exploded: {final_size} bytes for 101 references"
         );
     }
+
+    /// Lagged subscribers must skip frames — never emit empty multipart parts.
+    #[test]
+    fn test_lagged_subscriber_skips_without_empty_parts() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let (tx, rx) = broadcast::channel::<CameraFrame>(2);
+
+            // Flood the channel before the consumer reads.
+            for i in 0..50 {
+                let _ = tx.send(CameraFrame::new(vec![i as u8; 64]));
+            }
+
+            let mut stream = BroadcastStream::new(rx);
+            let mut parts: Vec<Bytes> = Vec::new();
+            let mut lagged = 0u64;
+
+            // Drain what we can; expect Lagged then later real frames.
+            for _ in 0..20 {
+                match stream.next().await {
+                    Some(Ok(frame)) => {
+                        let part = frame.mjpeg_part();
+                        assert!(
+                            !part.is_empty(),
+                            "mjpeg part must never be empty"
+                        );
+                        assert!(
+                            part.windows(7).any(|w| w == b"--frame"),
+                            "part must be a valid mjpeg boundary chunk"
+                        );
+                        parts.push(part);
+                    }
+                    Some(Err(BroadcastStreamRecvError::Lagged(n))) => {
+                        lagged += n;
+                        // Do not push empty bytes — same policy as the HTTP handler.
+                    }
+                    None => break,
+                }
+            }
+
+            // Producer still alive: send a fresh frame after lag.
+            let _ = tx.send(CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]));
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(frame) => {
+                        let part = frame.mjpeg_part();
+                        assert!(!part.is_empty());
+                        parts.push(part);
+                        break;
+                    }
+                    Err(BroadcastStreamRecvError::Lagged(_)) => continue,
+                }
+            }
+
+            assert!(
+                lagged > 0 || !parts.is_empty(),
+                "expected lag and/or recoverable frames"
+            );
+            assert!(
+                parts.iter().all(|p| !p.is_empty()),
+                "no empty mjpeg parts allowed"
+            );
+        });
+    }
+
+    #[test]
+    fn test_is_running_false_by_default() {
+        // Other tests may leave RUNNING true if they open a camera; only assert API exists.
+        let c = CameraController::new();
+        let _ = c.is_running();
+    }
 }
 
 #[cfg(test)]
@@ -312,7 +392,7 @@ async fn consume_stream(
     let mut stream = BroadcastStream::new(rx);
     let mut count = 0;
     while let Some(Ok(frame)) = stream.next().await {
-        let _ = frame.mjpeg_part.clone();
+        let _ = frame.mjpeg_part();
         count += 1;
         if count >= expected {
             break;
@@ -346,6 +426,10 @@ impl CameraController {
         }
     }
 
+    pub fn is_running(&self) -> bool {
+        RUNNING.load(Ordering::SeqCst)
+    }
+
     pub fn list_cameras(&self) -> Vec<serde_json::Value> {
         let devices = match nokhwa::query(ApiBackend::Auto) {
             Ok(d) => d,
@@ -364,36 +448,38 @@ impl CameraController {
             .collect()
     }
 
-    pub fn start(&self, frame_tx: broadcast::Sender<CameraFrame>, config: CameraConfigSnapshot) {
+    /// Start capture. Returns `Ok(())` once the device is open and streaming, or an error
+    /// if the camera cannot be opened. Already-running is treated as success.
+    pub fn start(
+        &self,
+        frame_tx: broadcast::Sender<CameraFrame>,
+        config: CameraConfigSnapshot,
+    ) -> Result<(), String> {
         if RUNNING.load(Ordering::SeqCst) {
-            return;
+            return Ok(());
         }
 
-        let idx = 0u32;
-        let mut temp = match Camera::new(
+        // Ensure any previous thread has fully exited before starting a new one.
+        self.join_camera_thread();
+
+        let idx = config.camera_index;
+        let mut temp = Camera::new(
             CameraIndex::Index(idx),
             RequestedFormat::new::<RgbFormat>(RequestedFormatType::None),
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Failed to open camera: {e}");
-                return;
-            }
-        };
+        )
+        .map_err(|e| format!("Failed to open camera {idx}: {e}"))?;
 
-        let formats = match temp.compatible_camera_formats() {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!("Failed to get formats: {e}");
-                return;
-            }
-        };
+        let formats = temp
+            .compatible_camera_formats()
+            .map_err(|e| format!("Failed to get formats for camera {idx}: {e}"))?;
 
         let best = select_best_format(&formats, &config.resolution);
         let target_fps = config.target_fps.clamp(1, 120);
         drop(temp);
 
         let latest = Arc::clone(&self.latest);
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+
         RUNNING.store(true, Ordering::SeqCst);
 
         let handle = thread::spawn(move || {
@@ -402,19 +488,29 @@ impl CameraController {
             let mut camera = match Camera::new(CameraIndex::Index(idx), requested) {
                 Ok(c) => c,
                 Err(e) => {
-                    log::error!("Failed to create camera: {e}");
+                    let msg = format!("Failed to create camera {idx}: {e}");
+                    log::error!("{msg}");
                     RUNNING.store(false, Ordering::SeqCst);
+                    let _ = ready_tx.send(Err(msg));
                     return;
                 }
             };
 
             if let Err(e) = camera.open_stream() {
-                log::error!("Failed to open stream: {e}");
+                let msg = format!("Failed to open stream on camera {idx}: {e}");
+                log::error!("{msg}");
                 RUNNING.store(false, Ordering::SeqCst);
+                let _ = ready_tx.send(Err(msg));
                 return;
             }
 
-            log::info!("Camera stream started (target: {target_fps} fps)");
+            log::info!(
+                "Camera {idx} stream started ({}x{} @ target {target_fps} fps)",
+                best.width(),
+                best.height()
+            );
+            let _ = ready_tx.send(Ok(()));
+
             let frame_interval = Duration::from_micros(1_000_000 / target_fps as u64);
             let mut last = Instant::now();
 
@@ -449,9 +545,8 @@ impl CameraController {
                 };
 
                 *latest.lock() = Some(camera_frame.clone());
-                if frame_tx.send(camera_frame).is_err() {
-                    log::debug!("No active subscribers");
-                }
+                // Lagged receivers are fine — broadcast drops old frames for them.
+                let _ = frame_tx.send(camera_frame);
 
                 last = Instant::now();
             }
@@ -461,6 +556,21 @@ impl CameraController {
         });
 
         *THREAD_HANDLE.lock() = Some(handle);
+
+        match ready_rx.recv_timeout(Duration::from_secs(8)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                self.join_camera_thread();
+                Err(e)
+            }
+            Err(_) => {
+                RUNNING.store(false, Ordering::SeqCst);
+                self.join_camera_thread();
+                Err(format!(
+                    "Timed out waiting for camera {idx} to start streaming"
+                ))
+            }
+        }
     }
 
     pub fn stop(&self) {

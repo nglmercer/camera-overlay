@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 
 use config::CameraConfig;
 
-const BROADCAST_CAPACITY: usize = 8;
+const BROADCAST_CAPACITY: usize = 16;
 
 pub async fn run_server(port: u16) -> std::io::Result<Arc<server::AppState>> {
     let camera = Arc::new(camera::CameraController::new());

@@ -22,13 +22,15 @@ A lightweight webcam overlay served over HTTP — designed for OBS Browser Sourc
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Web UI with camera controls |
+| GET | `/` | Overlay page (OBS Browser Source) |
+| GET | `/config` | Config UI |
 | GET | `/stream` | MJPEG stream (for OBS Browser Source) |
 | GET | `/snapshot` | Single JPEG frame |
-| GET | `/config` | Get current config |
-| POST | `/config` | Update config |
+| GET | `/settings` | Get current config JSON |
+| POST | `/settings` | Update config JSON |
+| GET | `/status` | `{ running, has_frame }` |
 | GET | `/cameras` | List available cameras |
-| POST | `/start` | Start camera capture |
+| POST | `/start` | Start camera capture (`{ ok, error?, running }`) |
 | POST | `/stop` | Stop camera capture |
 
 ## OBS Integration

@@ -21,19 +21,82 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
+            display: none;
         }
         #camera.mirror-h { transform: scaleX(-1); }
         #camera.mirror-v { transform: scaleY(-1); }
     </style>
 </head>
 <body>
-    <img id="camera" src="/stream" />
+    <img id="camera" alt="" />
     <script>
         const params = new URLSearchParams(window.location.search);
         const img = document.getElementById('camera');
         if (params.has('mirror_h')) img.classList.add('mirror-h');
         if (params.has('mirror_v')) img.classList.add('mirror-v');
-        window.addEventListener('beforeunload', () => { img.src = ''; });
+
+        let reconnectTimer = null;
+        let streamGeneration = 0;
+
+        function connectStream() {
+            streamGeneration += 1;
+            const gen = streamGeneration;
+            // Only attach stream when we want live video; query cache-bust reconnects cleanly.
+            img.style.display = 'block';
+            img.src = `/stream?t=${Date.now()}`;
+            img.onerror = () => {
+                if (gen !== streamGeneration) return;
+                scheduleReconnect();
+            };
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                img.removeAttribute('src');
+                connectStream();
+            }, 1500);
+        }
+
+        async function ensureRunningThenConnect() {
+            try {
+                const r = await fetch('/status');
+                if (r.ok) {
+                    const s = await r.json();
+                    if (!s.running) {
+                        // Overlay stays transparent until camera is started from /config
+                        img.style.display = 'none';
+                        img.removeAttribute('src');
+                        setTimeout(ensureRunningThenConnect, 2000);
+                        return;
+                    }
+                }
+            } catch (_) { /* fall through and try stream */ }
+            connectStream();
+        }
+
+        window.addEventListener('beforeunload', () => {
+            streamGeneration += 1;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            img.removeAttribute('src');
+        });
+
+        ensureRunningThenConnect();
+        // Re-check periodically so auto-start / config Start lights up OBS without reload
+        setInterval(async () => {
+            try {
+                const r = await fetch('/status');
+                if (!r.ok) return;
+                const s = await r.json();
+                if (s.running && !img.getAttribute('src')) {
+                    connectStream();
+                } else if (!s.running && img.getAttribute('src')) {
+                    img.removeAttribute('src');
+                    img.style.display = 'none';
+                }
+            } catch (_) {}
+        }, 3000);
     </script>
 </body>
 </html>
