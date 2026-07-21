@@ -88,7 +88,7 @@ async fn e2e_settings_post_and_get() {
     let resp = server.get("settings").await;
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
-    let body = r#"{"port": 9090, "target_fps": 60, "mirror_horizontal": true}"#;
+    let body = r#"{"port": 8080, "target_fps": 60, "mirror_horizontal": true}"#;
     let resp = server
         .client
         .post(format!("{}/settings", server.base_url))
@@ -101,7 +101,7 @@ async fn e2e_settings_post_and_get() {
 
     let resp = server.get("settings").await;
     let json: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(json["port"], 9090);
+    assert_eq!(json["port"], 8080);
     assert_eq!(json["target_fps"], 60);
     assert_eq!(json["mirror_horizontal"], true);
 }

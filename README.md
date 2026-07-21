@@ -147,8 +147,22 @@ Connected overlay clients also receive text messages on the `/ws` WebSocket. Eac
 
 The overlay page applies these automatically — no polling required.
 
+## System Tray
+
+A system tray icon provides quick access to common actions:
+
+| Menu item | Action |
+|-----------|--------|
+| **Start Camera** / **Stop Camera** | Toggle camera capture |
+| **Open Config** | Open the config UI in your browser |
+| **Restart** | Restart the server |
+| **Quit** | Exit the application |
+
+Clicking the tray icon also opens the config page.
+
 ## Requirements
 
 - Rust toolchain (1.70+)
 - Node.js / bun (for frontend build)
 - nokhwa native deps: `libv4l-dev` on Linux
+- Tray icon native deps (Linux): `libgtk-3-dev libappindicator3-dev`

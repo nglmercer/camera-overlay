@@ -9,6 +9,8 @@ edition = "2021"
 axum = { version = "0.8", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+tray-icon = "0.20"
+gtk = "0.18"
 nokhwa = { version = "0.10", features = ["input-native"] }
 image = "0.25"
 serde = { version = "1", features = ["derive"] }
@@ -22,6 +24,7 @@ bytes = "1"
 tokio-stream = { version = "0.1", features = ["sync"] }
 governor = "0.8"
 nonzero_ext = "0.3"
+open = "5"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

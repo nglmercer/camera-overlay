@@ -359,7 +359,7 @@ mod tests {
         let state = test_state();
         let app = build_router(state.clone());
 
-        let json_body = r#"{"port": 9090, "mirror_horizontal": true, "target_fps": 60}"#;
+        let json_body = r#"{"port": 8080, "mirror_horizontal": true, "target_fps": 60}"#;
 
         let response = app
             .oneshot(
@@ -374,7 +374,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(state.config.lock().port, 9090);
+        assert_eq!(state.config.lock().port, 8080);
         assert!(state.config.lock().mirror_horizontal);
         assert_eq!(state.config.lock().target_fps, 60);
     }

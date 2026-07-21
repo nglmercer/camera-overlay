@@ -3,6 +3,7 @@ pub mod config;
 pub mod logger;
 pub mod rate_limit;
 pub mod server;
+pub mod tray;
 
 use std::sync::Arc;
 use tokio::sync::broadcast;
