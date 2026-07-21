@@ -10,7 +10,13 @@ const BROADCAST_CAPACITY: usize = 4;
 async fn main() {
     camera_overlay::logger::init();
 
-    let config = camera_overlay::config::load();
+    let mut config = camera_overlay::config::load();
+    if let Ok(port) = std::env::var("CAMERA_OVERLAY_PORT") {
+        match port.parse::<u16>() {
+            Ok(port) if port >= 1024 => config.port = port,
+            _ => log::warn!("Ignoring invalid CAMERA_OVERLAY_PORT={port}"),
+        }
+    }
     let camera = Arc::new(camera_overlay::camera::CameraController::new());
     let (frame_tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
     let (overlay_tx, _overlay_rx) = broadcast::channel::<serde_json::Value>(8);

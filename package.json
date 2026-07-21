@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "build:web": "vite build",
-    "dev:web": "vite"
+    "dev:web": "vite",
+    "mcp": "node scripts/camera-overlay-mcp.mjs"
   },
   "devDependencies": {
     "@types/bun": "latest",

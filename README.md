@@ -41,6 +41,16 @@ curl -I http://127.0.0.1:8080/camera-overlay.svg
 
 You can also run `cargo test`; the `e2e_serves_all_web_assets_from_the_binary` test checks the embedded HTML, JavaScript, CSS, and icon routes.
 
+## MCP verification
+
+The project includes a dependency-free MCP stdio server for launching the app and testing overlay positioning:
+
+```bash
+npm run mcp
+```
+
+Configure an MCP client with the command `node /path/to/camera-overlay/scripts/camera-overlay-mcp.mjs`. Available tools include `start_app`, `set_overlay_position`, `start_camera`, `stop_camera`, and `verify_corner_positions`. The last tool moves the overlay through top-left, top-right, bottom-left, and bottom-right, then verifies each `/overlay` response.
+
 ## HTTP & WebSocket Endpoints
 
 | Method | Path | Description |
