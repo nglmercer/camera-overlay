@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-/// Bounded ring of recent frames. Slow subscribers lag and skip; capacity is
-/// large enough for a few frames of jitter without dropping every client.
-const BROADCAST_CAPACITY: usize = 16;
+/// Bounded ring of recent frames. The MJPEG handler drains to the *latest*
+/// frame on every emit, so capacity only bounds memory/transient jitter — it
+/// no longer controls latency. 4 keeps RSS low while tolerating brief stalls.
+const BROADCAST_CAPACITY: usize = 4;
 
 #[tokio::main]
 async fn main() {

@@ -117,6 +117,25 @@
         }
         .status-on { background: #2ed573; color: #1a1a2e; }
         .status-off { background: #ff4757; color: #fff; }
+        .preview { grid-column: 1 / -1; }
+        .preview img {
+            width: 100%;
+            max-height: 400px;
+            object-fit: contain;
+            border-radius: 8px;
+            background: #000;
+        }
+        .preview-placeholder {
+            width: 100%;
+            height: 240px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a2e;
+            border-radius: 8px;
+            color: #555;
+            font-size: 16px;
+        }
         .url-box {
             display: flex;
             gap: 8px;
@@ -183,6 +202,9 @@
             <div class="btn-row">
                 <button id="btn-start" class="btn btn-success" onclick="startCamera()">Start</button>
                 <button id="btn-stop" class="btn btn-danger" onclick="stopCamera()">Stop</button>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-primary" onclick="refreshSnapshot()">Refresh Snapshot</button>
             </div>
             <div id="error-msg" class="error-msg" role="alert"></div>
         </div>
@@ -264,6 +286,13 @@
                     <li>Check "Shutdown source when not visible"</li>
                 </ol>
             </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="card preview">
+            <h2>Preview</h2>
+            <div id="preview-placeholder" class="preview-placeholder">Camera is off — start to see preview</div>
+            <img id="preview-img" style="display:none;" />
         </div>
 
     </div>

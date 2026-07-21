@@ -37,15 +37,26 @@
 
         let reconnectTimer = null;
         let streamGeneration = 0;
+        let isStreaming = false;
+
+        function stopStream() {
+            if (!isStreaming) return;
+            streamGeneration += 1;
+            img.removeAttribute('src');
+            img.style.display = 'none';
+            isStreaming = false;
+        }
 
         function connectStream() {
+            if (isStreaming) return;
             streamGeneration += 1;
             const gen = streamGeneration;
-            // Only attach stream when we want live video; query cache-bust reconnects cleanly.
             img.style.display = 'block';
+            isStreaming = true;
             img.src = `/stream?t=${Date.now()}`;
             img.onerror = () => {
                 if (gen !== streamGeneration) return;
+                isStreaming = false;
                 scheduleReconnect();
             };
         }
@@ -54,7 +65,6 @@
             if (reconnectTimer) return;
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
-                img.removeAttribute('src');
                 connectStream();
             }, 1500);
         }
@@ -65,9 +75,7 @@
                 if (r.ok) {
                     const s = await r.json();
                     if (!s.running) {
-                        // Overlay stays transparent until camera is started from /config
-                        img.style.display = 'none';
-                        img.removeAttribute('src');
+                        stopStream();
                         setTimeout(ensureRunningThenConnect, 2000);
                         return;
                     }
@@ -79,21 +87,19 @@
         window.addEventListener('beforeunload', () => {
             streamGeneration += 1;
             if (reconnectTimer) clearTimeout(reconnectTimer);
-            img.removeAttribute('src');
+            stopStream();
         });
 
         ensureRunningThenConnect();
-        // Re-check periodically so auto-start / config Start lights up OBS without reload
         setInterval(async () => {
             try {
                 const r = await fetch('/status');
                 if (!r.ok) return;
                 const s = await r.json();
-                if (s.running && !img.getAttribute('src')) {
+                if (s.running && !isStreaming) {
                     connectStream();
-                } else if (!s.running && img.getAttribute('src')) {
-                    img.removeAttribute('src');
-                    img.style.display = 'none';
+                } else if (!s.running && isStreaming) {
+                    stopStream();
                 }
             } catch (_) {}
         }, 3000);

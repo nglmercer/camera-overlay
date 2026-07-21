@@ -1,5 +1,5 @@
 use image::codecs::jpeg::JpegEncoder;
-use image::{ExtendedColorType, ImageBuffer, Rgb};
+use image::ExtendedColorType;
 use nokhwa::{
     pixel_format::RgbFormat,
     utils::{
@@ -10,7 +10,6 @@ use nokhwa::{
 };
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -152,15 +151,34 @@ fn select_best_format(
         .unwrap_or_else(|| CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30))
 }
 
+/// Encode an RGB buffer to JPEG.
+///
+/// `JpegEncoder::encode` accepts a raw `&[u8]` and internally wraps it in a
+/// *borrowed* image view, so we feed it `rgb` directly. The previous
+/// implementation did `ImageBuffer::from_raw(width, height, rgb.to_vec())`,
+/// which copied the entire (often multi-MB) frame into an owned buffer on every
+/// single frame — a full memcpy + allocation that added per-frame latency and
+/// allocation churn (visible as RSS growth). `&mut Vec<u8>` is already `Write`,
+/// so the `Cursor` wrapper was also unnecessary.
 fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>, String> {
-    let image = ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, rgb.to_vec())
-        .ok_or("Failed to create image buffer")?;
+    // Validate dimensions up front. `JpegEncoder::encode` asserts (panics) on a
+    // buffer/size mismatch; the previous `ImageBuffer::from_raw` path returned
+    // `Err` instead, so we preserve that contract here.
+    let expected = (width as u64)
+        .checked_mul(height as u64)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or("Image dimensions overflow")?;
+    if rgb.len() as u64 != expected {
+        return Err(format!(
+            "Invalid buffer length: expected {expected} got {} for {width}x{height} image",
+            rgb.len()
+        ));
+    }
 
-    let mut buf = Vec::with_capacity((width * height * 3) as usize / 4);
-    let mut cursor = Cursor::new(&mut buf);
-    let mut encoder = JpegEncoder::new_with_quality(&mut cursor, quality);
+    let mut buf = Vec::with_capacity(expected as usize / 4);
+    let mut encoder = JpegEncoder::new_with_quality(&mut buf, quality);
     encoder
-        .encode(&image, width, height, ExtendedColorType::Rgb8)
+        .encode(rgb, width, height, ExtendedColorType::Rgb8)
         .map_err(|e| format!("JPEG encode error: {e}"))?;
     Ok(buf)
 }

@@ -10,9 +10,7 @@ use bytes::Bytes;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tower_http::cors::CorsLayer;
 
 use crate::camera::{CameraController, CameraFrame};
@@ -50,27 +48,62 @@ async fn serve_config() -> Html<&'static str> {
     Html(CONFIG_HTML)
 }
 
-/// MJPEG stream. On broadcast lag we **skip** lost frames (no empty multipart parts,
-/// no forced disconnect) so browsers keep a valid multipart stream.
+/// MJPEG stream with a "skip-to-latest" latency strategy.
+///
+/// A dedicated task per connection consumes the broadcast channel and always
+/// emits the *newest* frame: after `recv()`ing a frame it drains any newer
+/// frames already queued (a `try_recv` loop) and emits only the last one.
+/// Intermediate frames are dropped instead of buffered, so a slow client
+/// (throttled tab, congested socket, OBS re-sync) never renders a backlog of
+/// stale frames — which was the source of the "high delay" preview. The handoff
+/// to the HTTP body is a capacity-2 mpsc, so backpressure drops to latest
+/// rather than accumulating latency. On broadcast lag we simply continue (the
+/// next `recv` returns a recent frame); no empty multipart parts and no forced
+/// disconnect, so browsers keep a valid multipart stream.
 async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {
     let rx = state.frame_tx.subscribe();
 
-    let stream = BroadcastStream::new(rx).filter_map(|r| match r {
-        Ok(frame) => {
-            let part = frame.mjpeg_part();
-            if part.is_empty() {
-                None
-            } else {
-                Some(Ok::<Bytes, std::convert::Infallible>(part))
+    // Capacity 2: a tiny buffer lets the body writer stay one frame ahead
+    // without letting latency build up. Under backpressure the task keeps
+    // draining the broadcast channel to the latest frame.
+    let (tx, rx_out) = tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(2);
+
+    tokio::spawn(async move {
+        let mut rx = rx;
+        loop {
+            // Use select so a stalled recv (camera idle) still notices when
+            // the HTTP body is dropped (client disconnect) and exits promptly.
+            tokio::select! {
+                result = rx.recv() => {
+                    match result {
+                        Ok(mut latest) => {
+                            while let Ok(newer) = rx.try_recv() {
+                                latest = newer;
+                            }
+                            let part = latest.mjpeg_part();
+                            if part.is_empty() {
+                                continue;
+                            }
+                            if tx.send(Ok(part)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            log::debug!("Subscriber lagged by {n} frames, skipping to latest");
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                _ = tx.closed() => {
+                    // HTTP body dropped (client disconnected or response aborted)
+                    break;
+                }
             }
-        }
-        Err(BroadcastStreamRecvError::Lagged(n)) => {
-            log::debug!("Subscriber lagged by {n} frames, skipping to latest");
-            None
         }
     });
 
-    let body = Body::from_stream(stream);
+    let body = Body::from_stream(ReceiverStream::new(rx_out));
 
     let mut headers = HeaderMap::new();
     headers.insert(
