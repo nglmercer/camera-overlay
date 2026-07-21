@@ -124,12 +124,27 @@ async fn list_cameras(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 struct StatusResponse {
     running: bool,
     has_frame: bool,
+    /// Resident set size of this process in KiB (from Linux `/proc`, `null`
+    /// elsewhere). Exposed so memory growth can be watched with a curl loop.
+    memory_rss_kb: Option<usize>,
+}
+
+fn memory_rss_kb() -> Option<usize> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find(|line| line.starts_with("VmRSS:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
 }
 
 async fn camera_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(StatusResponse {
         running: state.camera.is_running(),
         has_frame: state.camera.latest_frame().is_some(),
+        memory_rss_kb: memory_rss_kb(),
     })
 }
 

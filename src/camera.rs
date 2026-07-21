@@ -23,23 +23,46 @@ use crate::config::ResolutionPreference;
 static RUNNING: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
 static THREAD_HANDLE: Lazy<Arc<Mutex<Option<thread::JoinHandle<()>>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
+/// Guards against concurrent `/start` calls: `RUNNING` is only set after a blocking
+/// device probe, so without this two parallel starts both pass the running check and
+/// spawn duplicate capture threads (only one thread handle is kept — the other leaks).
+static STARTING: AtomicBool = AtomicBool::new(false);
 
-/// JPEG frame shared across subscribers. MJPEG multipart bytes are built on demand
-/// so the broadcast channel only retains one Arc per frame (not a second full copy).
+/// Clears [`STARTING`] when the start attempt ends on any path (including early
+/// returns), so a failed start never blocks future attempts.
+struct StartingGuard;
+
+impl Drop for StartingGuard {
+    fn drop(&mut self) {
+        STARTING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// JPEG frame shared across subscribers. The MJPEG multipart body is built **once**
+/// when the frame is captured and shared as `Bytes` (refcounted), so N stream
+/// clients cost zero extra per-frame allocations. Previously every subscriber
+/// allocated a fresh frame-sized buffer per frame; that churn is freed into glibc
+/// per-thread arenas but rarely returned to the OS, so RSS climbed monotonically
+/// and looked exactly like a memory leak.
+///
+/// Cost: the broadcast ring retains one extra bounded copy per frame.
 #[derive(Clone)]
 pub struct CameraFrame {
     pub jpeg_data: Arc<Vec<u8>>,
+    part: bytes::Bytes,
 }
 
 impl CameraFrame {
     pub fn new(jpeg_data: Vec<u8>) -> Self {
+        let part = Self::build_mjpeg_part(&jpeg_data);
         Self {
             jpeg_data: Arc::new(jpeg_data),
+            part,
         }
     }
 
     pub fn mjpeg_part(&self) -> bytes::Bytes {
-        Self::build_mjpeg_part(&self.jpeg_data)
+        self.part.clone()
     }
 
     fn build_mjpeg_part(jpeg_data: &[u8]) -> bytes::Bytes {
@@ -457,6 +480,14 @@ impl CameraController {
             return Ok(());
         }
 
+        // Serialize concurrent starts: `RUNNING` is only set after the blocking
+        // device probe below, so without this guard two parallel /start requests
+        // both pass the check above and spawn duplicate capture threads.
+        if STARTING.swap(true, Ordering::SeqCst) {
+            return Err("Camera start already in progress".to_string());
+        }
+        let _starting = StartingGuard;
+
         // Ensure any previous thread has fully exited before starting a new one.
         self.join_camera_thread();
 
@@ -511,17 +542,40 @@ impl CameraController {
 
             let frame_interval = Duration::from_micros(1_000_000 / target_fps as u64);
             let mut last = Instant::now();
+            // Give up after ~5s of consecutive failures at the target fps.
+            let max_consecutive_errors = target_fps.saturating_mul(5).max(30);
+            let mut consecutive_errors = 0u32;
 
             while RUNNING.load(Ordering::SeqCst) {
                 let elapsed = last.elapsed();
                 if elapsed < frame_interval {
                     thread::sleep(frame_interval - elapsed);
                 }
+                // Update the pacer *before* capture so error `continue`s still
+                // sleep — otherwise persistent failures spin at 100% CPU.
+                last = Instant::now();
 
                 let frame = match camera.frame() {
                     Ok(f) => f,
-                    Err(_) => continue,
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors == 1 || consecutive_errors.is_multiple_of(target_fps)
+                        {
+                            log::warn!(
+                                "Frame capture failed ({consecutive_errors} consecutive): {e}"
+                            );
+                        }
+                        if consecutive_errors >= max_consecutive_errors {
+                            log::error!(
+                                "Camera {idx} failed {consecutive_errors} times in a row, stopping capture"
+                            );
+                            RUNNING.store(false, Ordering::SeqCst);
+                            break;
+                        }
+                        continue;
+                    }
                 };
+                consecutive_errors = 0;
 
                 let camera_frame = if matches!(frame.source_frame_format(), FrameFormat::MJPEG) {
                     CameraFrame::new(frame.buffer().to_vec())
@@ -545,8 +599,6 @@ impl CameraController {
                 *latest.lock() = Some(camera_frame.clone());
                 // Lagged receivers are fine — broadcast drops old frames for them.
                 let _ = frame_tx.send(camera_frame);
-
-                last = Instant::now();
             }
 
             let _ = camera.stop_stream();
