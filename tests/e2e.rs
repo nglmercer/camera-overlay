@@ -42,6 +42,7 @@ impl TestServer {
             config: parking_lot::Mutex::new(CameraConfig::default()),
             camera: Arc::new(camera_overlay::camera::CameraController::new()),
             frame_tx: (*frame_tx).clone(),
+            rate_limiters: camera_overlay::rate_limit::RateLimiters::new(),
         });
 
         let app = build_router(state);

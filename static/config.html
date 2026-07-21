@@ -301,6 +301,7 @@
         let config = {};
         let running = false;
         let currentObjectUrl = null;
+        let previewMode = null; // 'stream' | 'snapshot' | null
         let statusPoll = null;
 
         async function init() {
@@ -329,6 +330,26 @@
             badge.className = isOn ? 'status status-on' : 'status status-off';
         }
 
+        function showStreamPreview() {
+            revokeCurrentUrl();
+            const img = document.getElementById('preview-img');
+            // Bust cache and force a fresh multipart connection. The backend
+            // now drains to the latest frame, so this preview is low-latency.
+            img.removeAttribute('src');
+            img.src = `/stream?t=${Date.now()}`;
+            img.style.display = 'block';
+            document.getElementById('preview-placeholder').style.display = 'none';
+            previewMode = 'stream';
+        }
+
+        function hidePreview() {
+            const img = document.getElementById('preview-img');
+            img.removeAttribute('src');
+            img.style.display = 'none';
+            revokeCurrentUrl();
+            document.getElementById('preview-placeholder').style.display = 'flex';
+            previewMode = null;
+        }
 
         function revokeCurrentUrl() {
             if (currentObjectUrl) {
@@ -419,6 +440,12 @@
                 if (!r.ok) return;
                 const s = await r.json();
                 setRunningUi(!!s.running);
+                if (s.running && previewMode !== 'stream' && previewMode !== 'snapshot') {
+                    showStreamPreview();
+                }
+                if (!s.running && previewMode === 'stream') {
+                    hidePreview();
+                }
             } catch (_) { /* ignore poll errors */ }
         }
 
@@ -433,6 +460,7 @@
                 try { body = await r.json(); } catch (_) {}
                 if (!r.ok || body.ok === false) {
                     setRunningUi(false);
+                    hidePreview();
                     setError(body.error || `Start failed (HTTP ${r.status})`);
                     return;
                 }
@@ -446,8 +474,10 @@
                     }
                     await new Promise(res => setTimeout(res, 100));
                 }
+                showStreamPreview();
             } catch (e) {
                 setRunningUi(false);
+                hidePreview();
                 setError(String(e.message || e));
             } finally {
                 btn.disabled = false;
@@ -458,6 +488,27 @@
             setError('');
             await fetch('/stop', { method: 'POST' });
             setRunningUi(false);
+            hidePreview();
+        }
+
+        async function refreshSnapshot() {
+            setError('');
+            const r = await fetch('/snapshot');
+            if (r.ok) {
+                const blob = await r.blob();
+                revokeCurrentUrl();
+                const url = URL.createObjectURL(blob);
+                currentObjectUrl = url;
+                const img = document.getElementById('preview-img');
+                img.removeAttribute('src');
+                img.src = url;
+                img.style.display = 'block';
+                document.getElementById('preview-placeholder').style.display = 'none';
+                previewMode = 'snapshot';
+            } else {
+                const text = await r.text();
+                setError(text || `Snapshot unavailable (HTTP ${r.status}). Start the camera first.`);
+            }
         }
 
         function copyUrl(id) {
@@ -469,6 +520,8 @@
         window.addEventListener('beforeunload', () => {
             if (statusPoll) clearInterval(statusPoll);
             revokeCurrentUrl();
+            const img = document.getElementById('preview-img');
+            if (img) img.removeAttribute('src');
         });
 
         init();

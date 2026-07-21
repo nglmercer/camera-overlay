@@ -18,6 +18,7 @@ async fn main() {
         config: parking_lot::Mutex::new(config.clone()),
         camera: Arc::clone(&camera),
         frame_tx: frame_tx.clone(),
+        rate_limiters: camera_overlay::rate_limit::RateLimiters::new(),
     });
 
     let port = config.port;

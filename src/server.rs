@@ -2,6 +2,7 @@ use axum::{
     body::Body,
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -15,17 +16,21 @@ use tower_http::cors::CorsLayer;
 
 use crate::camera::{CameraController, CameraFrame};
 use crate::config::CameraConfig;
+use crate::rate_limit::{RateLimiters, rate_limit_middleware};
 
 pub struct AppState {
     pub config: parking_lot::Mutex<CameraConfig>,
     pub camera: Arc<CameraController>,
     pub frame_tx: broadcast::Sender<CameraFrame>,
+    pub rate_limiters: RateLimiters,
 }
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const CONFIG_HTML: &str = include_str!("../static/config.html");
 
 pub fn build_router(state: Arc<AppState>) -> Router {
+    let rl = Arc::new(state.rate_limiters.clone());
+
     Router::new()
         .route("/", get(serve_index))
         .route("/config", get(serve_config))
@@ -36,6 +41,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/status", get(camera_status))
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
+        .layer(middleware::from_fn_with_state(rl.clone(), rate_limit_middleware))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -266,6 +272,7 @@ mod tests {
             config: parking_lot::Mutex::new(CameraConfig::default()),
             camera,
             frame_tx,
+            rate_limiters: crate::rate_limit::RateLimiters::new(),
         })
     }
 

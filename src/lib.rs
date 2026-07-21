@@ -1,6 +1,7 @@
 pub mod camera;
 pub mod config;
 pub mod logger;
+pub mod rate_limit;
 pub mod server;
 
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub async fn run_server(port: u16) -> std::io::Result<Arc<server::AppState>> {
         config: parking_lot::Mutex::new(CameraConfig::default()),
         camera: Arc::clone(&camera),
         frame_tx,
+        rate_limiters: crate::rate_limit::RateLimiters::new(),
     });
 
     let app = server::build_router(Arc::clone(&state));
