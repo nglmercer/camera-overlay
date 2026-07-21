@@ -3,6 +3,9 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "build:web": "vite build"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "vite": "^8.1.5"

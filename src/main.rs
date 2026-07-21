@@ -25,10 +25,10 @@ async fn main() {
     let addr = format!("0.0.0.0:{port}");
 
     log::info!("Camera server running at http://localhost:{port}");
-    log::info!("Overlay:  http://localhost:{port}/");
-    log::info!("Config:   http://localhost:{port}/config");
-    log::info!("Stream:   http://localhost:{port}/stream");
-    log::info!("Add the overlay or stream URL as a Browser Source in OBS");
+    log::info!("Overlay:   http://localhost:{port}/");
+    log::info!("Config:    http://localhost:{port}/config");
+    log::info!("WS Stream: ws://localhost:{port}/ws");
+    log::info!("Add the overlay URL as a Browser Source in OBS");
 
     if config.auto_start {
         let snapshot = camera_overlay::camera::CameraConfigSnapshot {

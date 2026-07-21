@@ -263,7 +263,7 @@
                 <button id="btn-copy-overlay" class="btn btn-primary">Copy</button>
             </div>
 
-            <label for="stream-url" style="margin-top: 12px;">Raw MJPEG Stream URL</label>
+            <label for="stream-url" style="margin-top: 12px;">WebSocket Stream Endpoint</label>
             <div class="url-box">
                 <input type="text" id="stream-url" readonly>
                 <button id="btn-copy-stream" class="btn btn-primary">Copy</button>
@@ -287,10 +287,7 @@
             <div id="preview-placeholder" class="preview-placeholder">
                 Camera is off — click Start Camera above
             </div>
-            <div class="btn-row" style="margin-top: 12px;">
-                <button id="btn-snapshot" class="btn btn-primary">Refresh Snapshot</button>
-            </div>
-            <p class="hint">Canvas stream uses WebSocket binary push with off-thread ImageBitmap decoding for minimal latency.</p>
+            <p class="hint" style="margin-top: 12px;">Canvas stream uses WebSocket binary push with off-thread ImageBitmap decoding for minimal latency.</p>
         </div>
     </div>
 

@@ -24,7 +24,6 @@ class ConfigApp {
     private bindEvents(): void {
         document.getElementById('btn-start')?.addEventListener('click', () => this.startCamera());
         document.getElementById('btn-stop')?.addEventListener('click', () => this.stopCamera());
-        document.getElementById('btn-snapshot')?.addEventListener('click', () => this.refreshSnapshot());
         document.getElementById('btn-copy-stream')?.addEventListener('click', () => this.copyUrl('stream-url'));
         document.getElementById('btn-copy-overlay')?.addEventListener('click', () => this.copyUrl('overlay-url'));
 
@@ -151,7 +150,8 @@ class ConfigApp {
         const streamUrlInput = document.getElementById('stream-url') as HTMLInputElement | null;
         const overlayUrlInput = document.getElementById('overlay-url') as HTMLInputElement | null;
 
-        if (streamUrlInput) streamUrlInput.value = `http://localhost:${port}/stream`;
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        if (streamUrlInput) streamUrlInput.value = `${wsProtocol}//localhost:${port}/ws`;
         if (overlayUrlInput) overlayUrlInput.value = overlayUrl;
     }
 
@@ -224,29 +224,6 @@ class ConfigApp {
         await fetch('/stop', { method: 'POST' });
         this.setRunningUi(false);
         this.hidePreview();
-    }
-
-    private async refreshSnapshot(): Promise<void> {
-        this.setError('');
-        const r = await fetch('/snapshot');
-        if (r.ok) {
-            const blob = await r.blob();
-            const bitmap = await createImageBitmap(blob);
-            const canvas = document.getElementById('preview-canvas') as HTMLCanvasElement | null;
-            if (canvas) {
-                canvas.width = bitmap.width;
-                canvas.height = bitmap.height;
-                const ctx = canvas.getContext('2d');
-                ctx?.drawImage(bitmap, 0, 0);
-                canvas.style.display = 'block';
-                const placeholder = document.getElementById('preview-placeholder');
-                if (placeholder) placeholder.style.display = 'none';
-            }
-            bitmap.close();
-        } else {
-            const text = await r.text();
-            this.setError(text || `Snapshot unavailable (HTTP ${r.status}). Start the camera first.`);
-        }
     }
 
     private copyUrl(id: string): void {
