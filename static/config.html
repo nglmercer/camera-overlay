@@ -231,6 +231,7 @@
                     <span class="slider"></span>
                 </label>
             </div>
+            <p class="hint">Mirror via URL params — add <code>?mirror_h</code> or <code>?mirror_v</code> to the overlay URL, or use OBS Transform → Mirror.</p>
             <div class="toggle-row">
                 <span>Auto-start on launch</span>
                 <label class="toggle">
@@ -323,8 +324,15 @@
 
         function updateUrls() {
             const port = document.getElementById('port').value || 8080;
+            const h = document.getElementById('mirror-h').checked;
+            const v = document.getElementById('mirror-v').checked;
+            let overlayUrl = `http://localhost:${port}/`;
+            const params = [];
+            if (h) params.push('mirror_h');
+            if (v) params.push('mirror_v');
+            if (params.length) overlayUrl += '?' + params.join('&');
             document.getElementById('stream-url').value = `http://localhost:${port}/stream`;
-            document.getElementById('overlay-url').value = `http://localhost:${port}/`;
+            document.getElementById('overlay-url').value = overlayUrl;
         }
 
         async function updateConfig() {

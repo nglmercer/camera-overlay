@@ -82,7 +82,7 @@ async fn snapshot(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("image/jpeg"),
             );
-            (headers, f.jpeg_data).into_response()
+            (headers, f.to_jpeg_bytes()).into_response()
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -115,8 +115,7 @@ async fn start_camera(State(state): State<Arc<AppState>>) -> StatusCode {
     let cfg = state.config.lock();
     let snapshot = crate::camera::CameraConfigSnapshot {
         resolution: cfg.resolution.clone(),
-        mirror_h: cfg.mirror_horizontal,
-        mirror_v: cfg.mirror_vertical,
+        target_fps: cfg.target_fps,
     };
     drop(cfg);
 

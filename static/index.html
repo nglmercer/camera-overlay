@@ -22,9 +22,17 @@
             height: 100%;
             object-fit: contain;
         }
+        #camera.mirror-h { transform: scaleX(-1); }
+        #camera.mirror-v { transform: scaleY(-1); }
     </style>
 </head>
 <body>
     <img id="camera" src="/stream" />
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const img = document.getElementById('camera');
+        if (params.has('mirror_h')) img.classList.add('mirror-h');
+        if (params.has('mirror_v')) img.classList.add('mirror-v');
+    </script>
 </body>
 </html>

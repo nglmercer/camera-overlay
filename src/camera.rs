@@ -23,18 +23,28 @@ static RUNNING: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(fa
 
 #[derive(Clone)]
 pub struct CameraFrame {
-    pub jpeg_data: Vec<u8>,
+    pub jpeg_data: Arc<Vec<u8>>,
+    pub mjpeg_part: bytes::Bytes,
 }
 
 impl CameraFrame {
-    pub fn to_mjpeg_part(&self) -> bytes::Bytes {
-        let mut part = Vec::new();
-        part.extend_from_slice(b"--frame\r\n");
-        part.extend_from_slice(b"Content-Type: image/jpeg\r\n");
-        part.extend_from_slice(
-            format!("Content-Length: {}\r\n\r\n", self.jpeg_data.len()).as_bytes(),
+    pub fn new(jpeg_data: Vec<u8>) -> Self {
+        let mjpeg_part = Self::build_mjpeg_part(&jpeg_data);
+        Self {
+            jpeg_data: Arc::new(jpeg_data),
+            mjpeg_part,
+        }
+    }
+
+    fn build_mjpeg_part(jpeg_data: &[u8]) -> bytes::Bytes {
+        let header_fmt = format!(
+            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+            jpeg_data.len()
         );
-        part.extend_from_slice(&self.jpeg_data);
+        let total = header_fmt.len() + jpeg_data.len() + 2;
+        let mut part = Vec::with_capacity(total);
+        part.extend_from_slice(header_fmt.as_bytes());
+        part.extend_from_slice(jpeg_data);
         part.extend_from_slice(b"\r\n");
         bytes::Bytes::from(part)
     }
@@ -47,8 +57,7 @@ pub struct CameraController {
 #[derive(Clone)]
 pub struct CameraConfigSnapshot {
     pub resolution: ResolutionPreference,
-    pub mirror_h: bool,
-    pub mirror_v: bool,
+    pub target_fps: u32,
 }
 
 fn select_best_format(
@@ -95,7 +104,8 @@ fn select_best_format(
 
     sorted
         .first()
-        .map(|&&f| f)
+        .copied()
+        .copied()
         .unwrap_or_else(|| CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30))
 }
 
@@ -112,115 +122,22 @@ fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u
     Ok(buf)
 }
 
-fn apply_mirror(rgb: &mut [u8], width: u32, height: u32, h: bool, v: bool) {
-    let w = width as usize;
-    let hgt = height as usize;
-    let row = w * 3;
-
-    if h {
-        for y in 0..hgt {
-            let s = y * row;
-            for x in 0..w / 2 {
-                let l = x * 3;
-                let r = (w - 1 - x) * 3;
-                rgb.swap(s + l, s + r);
-                rgb.swap(s + l + 1, s + r + 1);
-                rgb.swap(s + l + 2, s + r + 2);
-            }
-        }
-    }
-
-    if v {
-        let mut tmp = vec![0u8; row];
-        for y in 0..hgt / 2 {
-            let top = y * row;
-            let bot = (hgt - 1 - y) * row;
-            tmp.copy_from_slice(&rgb[top..top + row]);
-            rgb.copy_within(bot..bot + row, top);
-            rgb[bot..bot + row].copy_from_slice(&tmp);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_apply_mirror_horizontal() {
-        // 2x2 RGB image: R G / B W
-        let mut rgb = vec![
-            255, 0, 0,   0, 255, 0,
-            0, 0, 255,   255, 255, 255,
-        ];
-        apply_mirror(&mut rgb, 2, 2, true, false);
-        // After horizontal mirror: G R / W B
-        assert_eq!(rgb, vec![
-            0, 255, 0,   255, 0, 0,
-            255, 255, 255,   0, 0, 255,
-        ]);
-    }
-
-    #[test]
-    fn test_apply_mirror_vertical() {
-        // 2x2 RGB image: R G / B W
-        let mut rgb = vec![
-            255, 0, 0,   0, 255, 0,
-            0, 0, 255,   255, 255, 255,
-        ];
-        apply_mirror(&mut rgb, 2, 2, false, true);
-        // After vertical mirror: B W / R G
-        assert_eq!(rgb, vec![
-            0, 0, 255,   255, 255, 255,
-            255, 0, 0,   0, 255, 0,
-        ]);
-    }
-
-    #[test]
-    fn test_apply_mirror_both() {
-        // 2x2 RGB image
-        let mut rgb = vec![
-            255, 0, 0,   0, 255, 0,
-            0, 0, 255,   255, 255, 255,
-        ];
-        apply_mirror(&mut rgb, 2, 2, true, true);
-        // After both mirrors: W B / G R
-        assert_eq!(rgb, vec![
-            255, 255, 255,   0, 0, 255,
-            0, 255, 0,   255, 0, 0,
-        ]);
-    }
-
-    #[test]
-    fn test_apply_mirror_no_op() {
-        let original = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-        let mut rgb = original.clone();
-        apply_mirror(&mut rgb, 2, 2, false, false);
-        assert_eq!(rgb, original);
-    }
-
-    #[test]
-    fn test_apply_mirror_single_pixel() {
-        let mut rgb = vec![100, 150, 200];
-        apply_mirror(&mut rgb, 1, 1, true, true);
-        assert_eq!(rgb, vec![100, 150, 200]);
-    }
-
-    #[test]
     fn test_encode_jpeg_valid() {
-        // 2x2 red image
         let rgb = vec![255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0];
         let result = encode_jpeg(&rgb, 2, 2, 80);
         assert!(result.is_ok());
         let jpeg = result.unwrap();
-        // JPEG starts with FFD8 and ends with FFD9
         assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
         assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
     }
 
     #[test]
     fn test_encode_jpeg_wrong_size() {
-        // 6 bytes but claiming 2x2 (needs 12)
         let rgb = vec![255, 0, 0, 255, 0, 0];
         let result = encode_jpeg(&rgb, 2, 2, 80);
         assert!(result.is_err());
@@ -269,7 +186,6 @@ mod tests {
             CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30),
         ];
         let best = select_best_format(&formats, &ResolutionPreference::Highest);
-        // Should pick MJPEG even though it's lower resolution
         assert!(matches!(best.format(), FrameFormat::MJPEG));
     }
 
@@ -282,13 +198,23 @@ mod tests {
     }
 
     #[test]
-    fn test_camera_frame_to_mjpeg_part() {
-        let frame = CameraFrame {
-            jpeg_data: vec![0xFF, 0xD8, 0xFF, 0xD9],
-        };
+    fn test_camera_frame_jpeg_to_mjpeg_part() {
+        let frame = CameraFrame::Jpeg(vec![0xFF, 0xD8, 0xFF, 0xD9]);
         let part = frame.to_mjpeg_part();
         let expected = b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xFF\xD8\xFF\xD9\r\n";
         assert_eq!(&part[..], expected);
+    }
+
+    #[test]
+    fn test_camera_frame_raw_rgb_to_jpeg() {
+        let frame = CameraFrame::RawRgb {
+            data: vec![255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0],
+            width: 2,
+            height: 2,
+        };
+        let jpeg = frame.to_jpeg_bytes();
+        assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
+        assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
     }
 }
 
@@ -343,15 +269,15 @@ impl CameraController {
         };
 
         let best = select_best_format(&formats, &config.resolution);
-        let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(best));
-        let mirror_h = config.mirror_h;
-        let mirror_v = config.mirror_v;
+        let target_fps = config.target_fps.clamp(1, 120);
         drop(temp);
 
         let latest = Arc::clone(&self.latest);
         RUNNING.store(true, Ordering::SeqCst);
 
         thread::spawn(move || {
+            let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(best));
+
             let mut camera = match Camera::new(CameraIndex::Index(idx), requested) {
                 Ok(c) => c,
                 Err(e) => {
@@ -367,14 +293,14 @@ impl CameraController {
                 return;
             }
 
-            log::info!("Camera stream started");
-            let target = Duration::from_millis(33);
+            log::info!("Camera stream started (target: {target_fps} fps)");
+            let frame_interval = Duration::from_micros(1_000_000 / target_fps as u64);
             let mut last = Instant::now();
 
             while RUNNING.load(Ordering::SeqCst) {
-                if last.elapsed() < target {
-                    thread::sleep(Duration::from_millis(1));
-                    continue;
+                let elapsed = last.elapsed();
+                if elapsed < frame_interval {
+                    thread::sleep(frame_interval - elapsed);
                 }
 
                 let frame = match camera.frame() {
@@ -382,27 +308,25 @@ impl CameraController {
                     Err(_) => continue,
                 };
 
-                let decoded = match frame.decode_image::<RgbFormat>() {
-                    Ok(d) => d,
-                    Err(_) => continue,
+                let camera_frame = if matches!(frame.source_frame_format(), FrameFormat::MJPEG) {
+                    CameraFrame::Jpeg(frame.buffer().to_vec())
+                } else {
+                    let decoded = match frame.decode_image::<RgbFormat>() {
+                        Ok(d) => d,
+                        Err(_) => continue,
+                    };
+                    let width = decoded.width();
+                    let height = decoded.height();
+                    let rgb = decoded.into_raw();
+                    CameraFrame::RawRgb {
+                        data: rgb,
+                        width,
+                        height,
+                    }
                 };
 
-                let width = decoded.width();
-                let height = decoded.height();
-                let mut rgb = decoded.into_raw();
-
-                if mirror_h || mirror_v {
-                    apply_mirror(&mut rgb, width, height, mirror_h, mirror_v);
-                }
-
-                match encode_jpeg(&rgb, width, height, 75) {
-                    Ok(jpeg) => {
-                        let frame = CameraFrame { jpeg_data: jpeg };
-                        *latest.lock() = Some(frame.clone());
-                        let _ = frame_tx.send(frame);
-                    }
-                    Err(e) => log::warn!("Encode failed: {e}"),
-                }
+                *latest.lock() = Some(camera_frame.clone());
+                let _ = frame_tx.send(camera_frame);
 
                 last = Instant::now();
             }
