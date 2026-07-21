@@ -326,40 +326,38 @@ mod tests {
             let mut parts: Vec<Bytes> = Vec::new();
             let mut lagged = 0u64;
 
-            // Drain what we can; expect Lagged then later real frames.
+            // Drain what we can with timeouts so an idle stream cannot hang the suite.
             for _ in 0..20 {
-                match stream.next().await {
-                    Some(Ok(frame)) => {
+                match tokio::time::timeout(Duration::from_millis(50), stream.next()).await {
+                    Ok(Some(Ok(frame))) => {
                         let part = frame.mjpeg_part();
-                        assert!(
-                            !part.is_empty(),
-                            "mjpeg part must never be empty"
-                        );
+                        assert!(!part.is_empty(), "mjpeg part must never be empty");
                         assert!(
                             part.windows(7).any(|w| w == b"--frame"),
                             "part must be a valid mjpeg boundary chunk"
                         );
                         parts.push(part);
                     }
-                    Some(Err(BroadcastStreamRecvError::Lagged(n))) => {
+                    Ok(Some(Err(BroadcastStreamRecvError::Lagged(n)))) => {
                         lagged += n;
                         // Do not push empty bytes — same policy as the HTTP handler.
                     }
-                    None => break,
+                    Ok(None) | Err(_) => break,
                 }
             }
 
             // Producer still alive: send a fresh frame after lag.
             let _ = tx.send(CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]));
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(frame) => {
+            for _ in 0..10 {
+                match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
+                    Ok(Some(Ok(frame))) => {
                         let part = frame.mjpeg_part();
                         assert!(!part.is_empty());
                         parts.push(part);
                         break;
                     }
-                    Err(BroadcastStreamRecvError::Lagged(_)) => continue,
+                    Ok(Some(Err(BroadcastStreamRecvError::Lagged(_)))) => continue,
+                    _ => break,
                 }
             }
 

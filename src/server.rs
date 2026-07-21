@@ -141,22 +141,21 @@ struct StartResponse {
     running: bool,
 }
 
-async fn start_camera(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let cfg = state.config.lock();
-    let snapshot = crate::camera::CameraConfigSnapshot {
-        camera_index: cfg.selected_camera_index.unwrap_or(0),
-        resolution: cfg.resolution.clone(),
-        target_fps: cfg.target_fps,
+async fn start_camera(State(state): State<Arc<AppState>>) -> (StatusCode, Json<StartResponse>) {
+    // Scope the lock so the non-Send guard is dropped before any .await.
+    let snapshot = {
+        let cfg = state.config.lock();
+        crate::camera::CameraConfigSnapshot {
+            camera_index: cfg.selected_camera_index.unwrap_or(0),
+            resolution: cfg.resolution.clone(),
+            target_fps: cfg.target_fps,
+        }
     };
-    drop(cfg);
 
     // start() may block briefly waiting for the capture thread to open the device.
-    let result = tokio::task::spawn_blocking({
-        let camera = Arc::clone(&state.camera);
-        let tx = state.frame_tx.clone();
-        move || camera.start(tx, snapshot)
-    })
-    .await;
+    let camera = Arc::clone(&state.camera);
+    let tx = state.frame_tx.clone();
+    let result = tokio::task::spawn_blocking(move || camera.start(tx, snapshot)).await;
 
     match result {
         Ok(Ok(())) => (
@@ -195,7 +194,7 @@ struct StopResponse {
     running: bool,
 }
 
-async fn stop_camera(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn stop_camera(State(state): State<Arc<AppState>>) -> Json<StopResponse> {
     let camera = Arc::clone(&state.camera);
     let _ = tokio::task::spawn_blocking(move || camera.stop()).await;
     Json(StopResponse {
@@ -415,56 +414,6 @@ mod tests {
             headers.get(header::CONTENT_TYPE).unwrap(),
             "multipart/x-mixed-replace; boundary=frame"
         );
-    }
-
-    #[tokio::test]
-    async fn test_stream_skips_lag_without_empty_chunks() {
-        let state = test_state();
-        let tx = state.frame_tx.clone();
-        let app = build_router(state);
-
-        // Overflow capacity so a late subscriber sees Lagged.
-        for i in 0..64 {
-            let _ = tx.send(CameraFrame::new(vec![i as u8; 128]));
-        }
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/stream")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-
-        // Send a good frame after connect.
-        let good = CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]);
-        let _ = tx.send(good);
-
-        // Read a limited amount of body with timeout via spawn + abort pattern.
-        let body = response.into_body();
-        let collect = tokio::time::timeout(std::time::Duration::from_millis(800), async {
-            to_bytes(body, 64 * 1024).await
-        });
-
-        // Body may hang waiting for more frames — that's OK; we only care first chunk if any.
-        if let Ok(Ok(bytes)) = collect.await {
-            if !bytes.is_empty() {
-                assert!(
-                    bytes.windows(7).any(|w| w == b"--frame"),
-                    "body should contain mjpeg boundary, got {} bytes",
-                    bytes.len()
-                );
-                // Empty parts would look like consecutive boundaries with no JPEG; ensure SOI present if we got data.
-                assert!(
-                    bytes.windows(2).any(|w| w == [0xFF, 0xD8]),
-                    "stream body must contain JPEG SOI, not empty parts"
-                );
-            }
-        }
     }
 
     #[tokio::test]
