@@ -5,12 +5,7 @@
 /// (encoded to H264 via openh264 or via VP8), and returns an SDP answer.
 ///
 /// Also provides `/webrtc/ice` for trickle ICE candidate exchange.
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -25,17 +20,12 @@ use webrtc::{
     interceptor::registry::Registry,
     media::Sample,
     peer_connection::{
-        configuration::RTCConfiguration,
-        peer_connection_state::RTCPeerConnectionState,
+        configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription,
     },
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
-    track::track_local::{
-        track_local_static_sample::TrackLocalStaticSample, TrackLocal,
-    },
+    track::track_local::{track_local_static_sample::TrackLocalStaticSample, TrackLocal},
 };
-
-
 
 #[derive(Deserialize)]
 pub struct SdpOffer {
@@ -63,15 +53,23 @@ pub async fn webrtc_offer(
     Json(offer): Json<SdpOffer>,
 ) -> impl IntoResponse {
     match handle_offer(state, offer).await {
-        Ok(answer) => (StatusCode::OK, Json(serde_json::json!({
-            "type": answer.kind,
-            "sdp": answer.sdp,
-        }))).into_response(),
+        Ok(answer) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "type": answer.kind,
+                "sdp": answer.sdp,
+            })),
+        )
+            .into_response(),
         Err(e) => {
             log::error!("WebRTC offer error: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": e,
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": e,
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -89,7 +87,9 @@ async fn handle_offer(
                     mime_type: MIME_TYPE_H264.to_owned(),
                     clock_rate: 90000,
                     channels: 0,
-                    sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f".to_owned(),
+                    sdp_fmtp_line:
+                        "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
+                            .to_owned(),
                     rtcp_feedback: vec![],
                 },
                 payload_type: 102,
@@ -190,7 +190,7 @@ async fn handle_offer(
                     // Full H264 transcoding requires an encoder (see README note).
                     // We write the raw JPEG data as a sample; the browser side
                     // must support the matching codec (e.g. via a custom depacketizer).
-                    // 
+                    //
                     // A practical approach: use VP8/JPEG codec if supported, or
                     // run ffmpeg/openh264 encoder. For now we ship JPEG bytes
                     // directly — browsers ignore unknown RTP payload types gracefully.
@@ -213,8 +213,8 @@ async fn handle_offer(
     });
 
     // --- Set remote description (offer) ---
-    let sdp_offer = RTCSessionDescription::offer(offer.sdp)
-        .map_err(|e| format!("Parse offer: {e}"))?;
+    let sdp_offer =
+        RTCSessionDescription::offer(offer.sdp).map_err(|e| format!("Parse offer: {e}"))?;
     peer_connection
         .set_remote_description(sdp_offer)
         .await

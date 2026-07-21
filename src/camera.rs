@@ -102,10 +102,7 @@ pub struct CameraConfigSnapshot {
     pub target_fps: u32,
 }
 
-fn select_best_format(
-    formats: &[CameraFormat],
-    preference: &ResolutionPreference,
-) -> CameraFormat {
+fn select_best_format(formats: &[CameraFormat], preference: &ResolutionPreference) -> CameraFormat {
     let mjpeg: Vec<&CameraFormat> = formats
         .iter()
         .filter(|f| matches!(f.format(), FrameFormat::MJPEG))

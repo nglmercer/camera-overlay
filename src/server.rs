@@ -14,7 +14,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::camera::{CameraController, CameraFrame};
 use crate::config::CameraConfig;
-use crate::rate_limit::{RateLimiters, rate_limit_middleware};
+use crate::rate_limit::{rate_limit_middleware, RateLimiters};
 
 pub struct AppState {
     pub config: parking_lot::Mutex<CameraConfig>,
@@ -39,10 +39,32 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/status", get(camera_status))
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
-        .nest_service("/chunks", tower_http::services::ServeDir::new("static/chunks"))
-        .route("/index.js", get(|| async { ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_str!("../static/index.js")) }))
-        .route("/config.js", get(|| async { ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_str!("../static/config.js")) }))
-        .layer(middleware::from_fn_with_state(rl.clone(), rate_limit_middleware))
+        .nest_service(
+            "/chunks",
+            tower_http::services::ServeDir::new("static/chunks"),
+        )
+        .route(
+            "/index.js",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+                    include_str!("../static/index.js"),
+                )
+            }),
+        )
+        .route(
+            "/config.js",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+                    include_str!("../static/config.js"),
+                )
+            }),
+        )
+        .layer(middleware::from_fn_with_state(
+            rl.clone(),
+            rate_limit_middleware,
+        ))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -346,6 +368,9 @@ mod tests {
             .unwrap();
 
         // In hyper/axum oneshot service without IO connection, ws upgrade returns 426 Upgrade Required or 101.
-        assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS || response.status() == StatusCode::UPGRADE_REQUIRED);
+        assert!(
+            response.status() == StatusCode::SWITCHING_PROTOCOLS
+                || response.status() == StatusCode::UPGRADE_REQUIRED
+        );
     }
 }

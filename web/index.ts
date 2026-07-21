@@ -18,14 +18,9 @@ class OverlayApp {
             throw new Error('Camera video/canvas elements not found');
         }
 
-        // Prefer WebRTC if RTCPeerConnection is available
-        if (typeof RTCPeerConnection !== 'undefined') {
-            this.mode = 'webrtc';
-            this.webrtcRenderer = new WebRTCStreamRenderer(this.videoEl);
-        } else {
-            this.mode = 'websocket';
-            this.wsRenderer = new CanvasStreamRenderer(this.canvas);
-        }
+        // Use WebSocket canvas renderer for zero-latency raw JPEG frame rendering
+        this.mode = 'websocket';
+        this.wsRenderer = new CanvasStreamRenderer(this.canvas);
 
         this.applyParams();
     }

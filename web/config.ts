@@ -9,9 +9,7 @@ class ConfigApp {
     constructor() {
         const videoEl = document.getElementById('preview-video') as HTMLVideoElement;
         const canvas = document.getElementById('preview-canvas') as HTMLCanvasElement;
-        if (typeof RTCPeerConnection !== 'undefined' && videoEl) {
-            this.webrtcRenderer = new WebRTCStreamRenderer(videoEl);
-        } else if (canvas) {
+        if (canvas) {
             this.wsRenderer = new CanvasStreamRenderer(canvas);
         }
         this.bindEvents();

@@ -45,10 +45,7 @@ impl TestServer {
             .build()
             .unwrap();
 
-        let server = Self {
-            base_url,
-            client,
-        };
+        let server = Self { base_url, client };
         server.wait_ready().await;
         server
     }
@@ -135,7 +132,10 @@ async fn e2e_start_missing_camera_returns_error_body() {
     if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
         assert_eq!(json["ok"], false);
         assert!(
-            json["error"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+            json["error"]
+                .as_str()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
             "error message required on failure"
         );
         assert_eq!(json["running"], false);
