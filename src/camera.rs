@@ -142,6 +142,156 @@ fn apply_mirror(rgb: &mut [u8], width: u32, height: u32, h: bool, v: bool) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_mirror_horizontal() {
+        // 2x2 RGB image: R G / B W
+        let mut rgb = vec![
+            255, 0, 0,   0, 255, 0,
+            0, 0, 255,   255, 255, 255,
+        ];
+        apply_mirror(&mut rgb, 2, 2, true, false);
+        // After horizontal mirror: G R / W B
+        assert_eq!(rgb, vec![
+            0, 255, 0,   255, 0, 0,
+            255, 255, 255,   0, 0, 255,
+        ]);
+    }
+
+    #[test]
+    fn test_apply_mirror_vertical() {
+        // 2x2 RGB image: R G / B W
+        let mut rgb = vec![
+            255, 0, 0,   0, 255, 0,
+            0, 0, 255,   255, 255, 255,
+        ];
+        apply_mirror(&mut rgb, 2, 2, false, true);
+        // After vertical mirror: B W / R G
+        assert_eq!(rgb, vec![
+            0, 0, 255,   255, 255, 255,
+            255, 0, 0,   0, 255, 0,
+        ]);
+    }
+
+    #[test]
+    fn test_apply_mirror_both() {
+        // 2x2 RGB image
+        let mut rgb = vec![
+            255, 0, 0,   0, 255, 0,
+            0, 0, 255,   255, 255, 255,
+        ];
+        apply_mirror(&mut rgb, 2, 2, true, true);
+        // After both mirrors: W B / G R
+        assert_eq!(rgb, vec![
+            255, 255, 255,   0, 0, 255,
+            0, 255, 0,   255, 0, 0,
+        ]);
+    }
+
+    #[test]
+    fn test_apply_mirror_no_op() {
+        let original = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let mut rgb = original.clone();
+        apply_mirror(&mut rgb, 2, 2, false, false);
+        assert_eq!(rgb, original);
+    }
+
+    #[test]
+    fn test_apply_mirror_single_pixel() {
+        let mut rgb = vec![100, 150, 200];
+        apply_mirror(&mut rgb, 1, 1, true, true);
+        assert_eq!(rgb, vec![100, 150, 200]);
+    }
+
+    #[test]
+    fn test_encode_jpeg_valid() {
+        // 2x2 red image
+        let rgb = vec![255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0];
+        let result = encode_jpeg(&rgb, 2, 2, 80);
+        assert!(result.is_ok());
+        let jpeg = result.unwrap();
+        // JPEG starts with FFD8 and ends with FFD9
+        assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
+        assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
+    }
+
+    #[test]
+    fn test_encode_jpeg_wrong_size() {
+        // 6 bytes but claiming 2x2 (needs 12)
+        let rgb = vec![255, 0, 0, 255, 0, 0];
+        let result = encode_jpeg(&rgb, 2, 2, 80);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_select_best_format_highest() {
+        let formats = vec![
+            CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30),
+            CameraFormat::new(Resolution::new(1920, 1080), FrameFormat::MJPEG, 30),
+            CameraFormat::new(Resolution::new(1280, 720), FrameFormat::MJPEG, 60),
+        ];
+        let best = select_best_format(&formats, &ResolutionPreference::Highest);
+        assert_eq!(best.width(), 1920);
+        assert_eq!(best.height(), 1080);
+    }
+
+    #[test]
+    fn test_select_best_format_lowest() {
+        let formats = vec![
+            CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30),
+            CameraFormat::new(Resolution::new(1920, 1080), FrameFormat::MJPEG, 30),
+            CameraFormat::new(Resolution::new(1280, 720), FrameFormat::MJPEG, 60),
+        ];
+        let best = select_best_format(&formats, &ResolutionPreference::Lowest);
+        assert_eq!(best.width(), 640);
+        assert_eq!(best.height(), 480);
+    }
+
+    #[test]
+    fn test_select_best_format_medium() {
+        let formats = vec![
+            CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30),
+            CameraFormat::new(Resolution::new(1920, 1080), FrameFormat::MJPEG, 30),
+            CameraFormat::new(Resolution::new(1280, 720), FrameFormat::MJPEG, 60),
+        ];
+        let best = select_best_format(&formats, &ResolutionPreference::Medium);
+        assert_eq!(best.width(), 1280);
+        assert_eq!(best.height(), 720);
+    }
+
+    #[test]
+    fn test_select_best_format_prefers_mjpeg() {
+        let formats = vec![
+            CameraFormat::new(Resolution::new(1920, 1080), FrameFormat::YUYV, 30),
+            CameraFormat::new(Resolution::new(640, 480), FrameFormat::MJPEG, 30),
+        ];
+        let best = select_best_format(&formats, &ResolutionPreference::Highest);
+        // Should pick MJPEG even though it's lower resolution
+        assert!(matches!(best.format(), FrameFormat::MJPEG));
+    }
+
+    #[test]
+    fn test_select_best_format_empty() {
+        let formats: Vec<CameraFormat> = vec![];
+        let best = select_best_format(&formats, &ResolutionPreference::Medium);
+        assert_eq!(best.width(), 640);
+        assert_eq!(best.height(), 480);
+    }
+
+    #[test]
+    fn test_camera_frame_to_mjpeg_part() {
+        let frame = CameraFrame {
+            jpeg_data: vec![0xFF, 0xD8, 0xFF, 0xD9],
+        };
+        let part = frame.to_mjpeg_part();
+        let expected = b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xFF\xD8\xFF\xD9\r\n";
+        assert_eq!(&part[..], expected);
+    }
+}
+
 impl CameraController {
     pub fn new() -> Self {
         Self {

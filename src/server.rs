@@ -128,3 +128,200 @@ async fn stop_camera(State(state): State<Arc<AppState>>) -> StatusCode {
     state.camera.stop();
     StatusCode::OK
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::http::Request;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    fn test_state() -> Arc<AppState> {
+        let camera = Arc::new(CameraController::new());
+        let (frame_tx, _rx) = broadcast::channel(2);
+        Arc::new(AppState {
+            config: parking_lot::Mutex::new(CameraConfig::default()),
+            camera,
+            frame_tx,
+        })
+    }
+
+    #[tokio::test]
+    async fn test_get_index() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(body.windows(4).any(|w| w == b"<img"));
+    }
+
+    #[tokio::test]
+    async fn test_get_config_page() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(body.windows(5).any(|w| w == b"<h1>C"));
+    }
+
+    #[tokio::test]
+    async fn test_get_settings() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/settings")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["port"], 8080);
+    }
+
+    #[tokio::test]
+    async fn test_post_settings() {
+        let state = test_state();
+        let app = build_router(state.clone());
+
+        let json_body = r#"{"port": 9090, "mirror_horizontal": true, "target_fps": 60}"#;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/settings")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.config.lock().port, 9090);
+        assert!(state.config.lock().mirror_horizontal);
+        assert_eq!(state.config.lock().target_fps, 60);
+    }
+
+    #[tokio::test]
+    async fn test_get_snapshot_when_off() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/snapshot")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_start_stop_camera() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Give the camera thread a moment to produce a frame
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_cameras() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/cameras")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.is_array());
+    }
+
+    #[tokio::test]
+    async fn test_get_stream() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let headers = response.headers();
+        assert_eq!(
+            headers.get(header::CONTENT_TYPE).unwrap(),
+            "multipart/x-mixed-replace; boundary=frame"
+        );
+    }
+}
