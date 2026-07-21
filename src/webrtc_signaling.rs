@@ -20,6 +20,7 @@ use webrtc::{
         media_engine::{MediaEngine, MIME_TYPE_H264},
         APIBuilder,
     },
+    ice::mdns::MulticastDnsMode,
     ice_transport::ice_server::RTCIceServer,
     interceptor::registry::Registry,
     media::Sample,
@@ -102,12 +103,34 @@ async fn handle_offer(
     registry = register_default_interceptors(registry, &mut media_engine)
         .map_err(|e| format!("Interceptors: {e}"))?;
 
+    let mut setting_engine = webrtc::api::setting_engine::SettingEngine::default();
+    // Disable mDNS candidate obfuscation to prevent local host resolution timeouts
+    setting_engine.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+    // Filter out link-local IPv6 addresses to prevent "Invalid argument (os error 22)" UDP bind failures
+    setting_engine.set_interface_filter(Box::new(|name| {
+        !name.starts_with("docker") && !name.starts_with("veth")
+    }));
+    // Filter IP addresses to avoid unrouteable link-local fe80:: addresses
+    setting_engine.set_ip_filter(Box::new(|ip| {
+        if ip.is_ipv6() {
+            // Reject link-local IPv6 addresses (fe80::)
+            let segments = match ip {
+                std::net::IpAddr::V6(v6) => v6.segments(),
+                _ => return false,
+            };
+            (segments[0] & 0xffc0) != 0xfe80
+        } else {
+            true
+        }
+    }));
+
     let api = APIBuilder::new()
         .with_media_engine(media_engine)
         .with_interceptor_registry(registry)
+        .with_setting_engine(setting_engine)
         .build();
 
-    // --- ICE configuration (STUN only, localhost peers don't need TURN) ---
+    // --- ICE configuration ---
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],

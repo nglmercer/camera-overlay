@@ -167,9 +167,17 @@ export class WebRTCStreamRenderer {
     private async negotiate(): Promise<void> {
         if (!this.active) return;
 
+        if (this.pc) {
+            this.pc.close();
+            this.pc = null;
+        }
+
         try {
             this.pc = new RTCPeerConnection({
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' }
+                ],
             });
 
             // Receive remote video track
