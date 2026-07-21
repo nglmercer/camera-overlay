@@ -1,4 +1,4 @@
-name: Multi-Platform Build
+name: CI / Build & Release
 
 on:
   push:
@@ -8,27 +8,8 @@ on:
     branches: [main, master]
   workflow_dispatch:
     inputs:
-      target:
-        description: "Build target (optional, leave empty for all)"
-        required: false
-        default: ""
-        type: choice
-        options:
-          - ""
-          - linux-x64
-          - linux-x64-baseline
-          - linux-x64-modern
-          - linux-arm64
-          - linux-x64-musl
-          - linux-arm64-musl
-          - windows-x64
-          - windows-x64-baseline
-          - windows-x64-modern
-          - darwin-x64
-          - darwin-x64-baseline
-          - darwin-arm64
       release_tag:
-        description: "Release tag (e.g., v1.0.0). Leave empty to skip creating a release."
+        description: "Release tag (e.g. v0.1.0). Leave empty to skip creating a release."
         required: false
         default: ""
         type: string
@@ -42,184 +23,128 @@ on:
         required: false
         default: false
         type: boolean
-      generate_notes:
-        description: "Auto-generate release notes"
-        required: false
-        default: true
-        type: boolean
-      release_notes:
-        description: "Custom release notes (only used if auto-generate is false)"
-        required: false
-        default: ""
-        type: string
 
 env:
-  APP_NAME: webcam-manager
+  APP_NAME: camera-overlay
+  CARGO_TERM_COLOR: always
 
 jobs:
-  # Determine which targets to build
-  setup:
+  check-and-test:
+    name: Check, Lint & Test (Linux)
     runs-on: ubuntu-latest
-    outputs:
-      targets: ${{ steps.set-targets.outputs.targets }}
-    steps:
-      - id: set-targets
-        run: |
-          if [ "${{ github.event.inputs.target }}" != "" ]; then
-            echo "targets=[\"${{ github.event.inputs.target }}\"]" >> $GITHUB_OUTPUT
-          else
-            echo 'targets=["linux-x64", "linux-arm64", "windows-x64", "darwin-x64", "darwin-arm64"]' >> $GITHUB_OUTPUT
-          fi
-
-  # Build for Linux
-  build-linux:
-    needs: setup
-    if: contains(needs.setup.outputs.targets, 'linux')
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [linux-x64, linux-arm64, linux-x64-musl]
-        include:
-          - target: linux-x64
-            build-target: bun-linux-x64
-          - target: linux-arm64
-            build-target: bun-linux-arm64
-          - target: linux-x64-musl
-            build-target: bun-linux-x64-musl
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build for ${{ matrix.target }}
+      - name: Install native dependencies
         run: |
-          bun build ./src/index.ts \
-            --compile \
-            --target=${{ matrix.build-target }} \
-            --minify \
-            --sourcemap \
-            --bytecode \
-            --define BUILD_VERSION='"${{ github.ref_name }}"' \
-            --define BUILD_TIME='"${{ github.event.head_commit.timestamp }}"' \
-            --define BUILD_TARGET='"${{ matrix.target }}"' \
-            --outfile ./dist/${{ env.APP_NAME }}-${{ matrix.target }}
+          sudo apt-get update
+          sudo apt-get install -y libv4l-dev pkg-config
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          name: ${{ env.APP_NAME }}-${{ matrix.target }}
-          path: ./dist/${{ env.APP_NAME }}-${{ matrix.target }}
-          if-no-files-found: error
+          components: clippy, rustfmt
 
-  # Build for Windows
-  build-windows:
-    needs: setup
-    if: contains(needs.setup.outputs.targets, 'windows')
-    runs-on: windows-latest
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install web dependencies
+        run: npm ci || npm install
+
+      - name: Build web assets
+        run: npm run build:web
+
+      - name: Run cargo check
+        run: cargo check --all-targets
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+  build:
+    name: Build Binary (${{ matrix.target }})
+    needs: check-and-test
     strategy:
+      fail-fast: false
       matrix:
-        target: [windows-x64]
         include:
-          - target: windows-x64
-            build-target: bun-windows-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: camera-overlay-linux-x86_64
+            asset_path: target/release/camera-overlay
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: camera-overlay-windows-x86_64.exe
+            asset_path: target/release/camera-overlay.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: camera-overlay-macos-arm64
+            asset_path: target/release/camera-overlay
+
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libv4l-dev pkg-config
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          bun-version: latest
+          targets: ${{ matrix.target }}
 
-      - name: Install dependencies
-        run: bun install
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: Build for ${{ matrix.target }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install web dependencies
+        run: npm ci || npm install
+
+      - name: Build web assets
+        run: npm run build:web
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact
         shell: bash
         run: |
-          bun build ./src/index.ts \
-            --compile \
-            --target=${{ matrix.build-target }} \
-            --minify \
-            --sourcemap \
-            --bytecode \
-            --define BUILD_VERSION='"${{ github.ref_name }}"' \
-            --define BUILD_TIME='"${{ github.event.head_commit.timestamp }}"' \
-            --define BUILD_TARGET='"${{ matrix.target }}"' \
-            --outfile ./dist/${{ env.APP_NAME }}-${{ matrix.target }}.exe
+          mkdir -p dist
+          cp "${{ matrix.asset_path }}" "dist/${{ matrix.artifact_name }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-${{ matrix.target }}
-          path: ./dist/${{ env.APP_NAME }}-${{ matrix.target }}.exe
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}
           if-no-files-found: error
 
-  # Build for macOS
-  build-macos:
-    needs: setup
-    if: contains(needs.setup.outputs.targets, 'darwin')
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        target: [darwin-x64, darwin-arm64]
-        include:
-          - target: darwin-x64
-            build-target: bun-darwin-x64
-          - target: darwin-arm64
-            build-target: bun-darwin-arm64
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Build for ${{ matrix.target }}
-        run: |
-          bun build ./src/index.ts \
-            --compile \
-            --target=${{ matrix.build-target }} \
-            --minify \
-            --sourcemap \
-            --bytecode \
-            --define BUILD_VERSION='"${{ github.ref_name }}"' \
-            --define BUILD_TIME='"${{ github.event.head_commit.timestamp }}"' \
-            --define BUILD_TARGET='"${{ matrix.target }}"' \
-            --outfile ./dist/${{ env.APP_NAME }}-${{ matrix.target }}
-
-      - name: Make executable
-        run: chmod +x ./dist/${{ env.APP_NAME }}-${{ matrix.target }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_NAME }}-${{ matrix.target }}
-          path: ./dist/${{ env.APP_NAME }}-${{ matrix.target }}
-          if-no-files-found: error
-
-  # Create release with all artifacts
   release:
-    needs: [build-linux, build-windows, build-macos]
+    name: GitHub Release
+    needs: build
     runs-on: ubuntu-latest
     if: |
       always() &&
-      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
-      (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
-      (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
-      (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != '')
+      needs.build.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != ''))
     permissions:
       contents: write
     steps:
@@ -240,69 +165,14 @@ jobs:
             echo "name=Release ${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Determine prerelease status
-        id: prerelease_check
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "is_prerelease=${{ github.event.inputs.prerelease }}" >> $GITHUB_OUTPUT
-          else
-            if [[ "${{ github.ref_name }}" =~ (alpha|beta|rc) ]]; then
-              echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            else
-              echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - name: Determine draft status
-        id: draft_check
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "is_draft=${{ github.event.inputs.draft }}" >> $GITHUB_OUTPUT
-          else
-            echo "is_draft=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Determine release notes
-        id: notes_check
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            if [ "${{ github.event.inputs.generate_notes }}" == "true" ]; then
-              echo "generate_notes=true" >> $GITHUB_OUTPUT
-              echo "body=" >> $GITHUB_OUTPUT
-            else
-              echo "generate_notes=false" >> $GITHUB_OUTPUT
-              echo "body=${{ github.event.inputs.release_notes }}" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "generate_notes=true" >> $GITHUB_OUTPUT
-            echo "body=" >> $GITHUB_OUTPUT
-          fi
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.tag }}
           name: ${{ steps.release_info.outputs.name }}
-          files: ./artifacts/**/*
-          generate_release_notes: ${{ steps.notes_check.outputs.generate_notes == 'true' }}
-          body: ${{ steps.notes_check.outputs.body }}
-          draft: ${{ steps.draft_check.outputs.is_draft == 'true' }}
-          prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
+          files: ./artifacts/*
+          generate_release_notes: true
+          draft: ${{ github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Summary job
-  summary:
-    needs: [build-linux, build-windows, build-macos]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Build Summary
-        run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux | ${{ needs.build-linux.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows | ${{ needs.build-windows.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| macOS | ${{ needs.build-macos.result }} |" >> $GITHUB_STEP_SUMMARY
