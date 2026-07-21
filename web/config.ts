@@ -1,14 +1,18 @@
-import { CanvasStreamRenderer, CameraConfig, CameraDeviceInfo, CameraStatus, StartResponse } from './overlay';
+import { CanvasStreamRenderer, WebRTCStreamRenderer, CameraConfig, CameraDeviceInfo, CameraStatus, StartResponse } from './overlay';
 
 class ConfigApp {
-    private renderer: CanvasStreamRenderer | null = null;
+    private webrtcRenderer: WebRTCStreamRenderer | null = null;
+    private wsRenderer: CanvasStreamRenderer | null = null;
     private config: CameraConfig = {};
     private statusPoll: number | null = null;
 
     constructor() {
+        const videoEl = document.getElementById('preview-video') as HTMLVideoElement;
         const canvas = document.getElementById('preview-canvas') as HTMLCanvasElement;
-        if (canvas) {
-            this.renderer = new CanvasStreamRenderer(canvas);
+        if (typeof RTCPeerConnection !== 'undefined' && videoEl) {
+            this.webrtcRenderer = new WebRTCStreamRenderer(videoEl);
+        } else if (canvas) {
+            this.wsRenderer = new CanvasStreamRenderer(canvas);
         }
         this.bindEvents();
     }
@@ -59,17 +63,26 @@ class ConfigApp {
     }
 
     private showCanvasPreview(): void {
+        const videoEl = document.getElementById('preview-video') as HTMLVideoElement | null;
         const canvas = document.getElementById('preview-canvas');
         const placeholder = document.getElementById('preview-placeholder');
-        if (canvas) canvas.style.display = 'block';
         if (placeholder) placeholder.style.display = 'none';
-        this.renderer?.start();
+        if (this.webrtcRenderer && videoEl) {
+            videoEl.style.display = 'block';
+            this.webrtcRenderer.start();
+        } else if (this.wsRenderer && canvas) {
+            canvas.style.display = 'block';
+            this.wsRenderer.start();
+        }
     }
 
     private hidePreview(): void {
-        this.renderer?.stop();
+        const videoEl = document.getElementById('preview-video') as HTMLVideoElement | null;
         const canvas = document.getElementById('preview-canvas');
         const placeholder = document.getElementById('preview-placeholder');
+        this.webrtcRenderer?.stop();
+        this.wsRenderer?.stop();
+        if (videoEl) videoEl.style.display = 'none';
         if (canvas) canvas.style.display = 'none';
         if (placeholder) placeholder.style.display = 'flex';
     }

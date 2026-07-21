@@ -53,7 +53,7 @@ pub async fn rate_limit_middleware(
 ) -> Response {
     let path = request.uri().path();
     let limited = match path {
-        "/start" | "/stop" => Some(&rate_limiters.control),
+        "/start" | "/stop" | "/webrtc/offer" => Some(&rate_limiters.control),
         "/settings" if request.method() == http::Method::POST => Some(&rate_limiters.control),
         "/ws" => Some(&rate_limiters.data),
         _ => None,

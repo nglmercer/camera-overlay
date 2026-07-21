@@ -118,7 +118,7 @@
         .status-on { background: #2ed573; color: #1a1a2e; }
         .status-off { background: #ff4757; color: #fff; }
         .preview { grid-column: 1 / -1; }
-        .preview canvas {
+        .preview canvas, .preview video {
             width: 100%;
             max-height: 400px;
             object-fit: contain;
@@ -284,12 +284,15 @@
 
         <!-- Live Preview -->
         <div class="card preview">
-            <h2>Live Preview (Canvas / WebSocket Low Latency)</h2>
+            <h2>Live Preview (WebRTC / WebSocket Low Latency)</h2>
+            <!-- Primary: WebRTC video -->
+            <video id="preview-video" autoplay muted playsinline style="display: none;"></video>
+            <!-- Fallback: WebSocket canvas -->
             <canvas id="preview-canvas" style="display: none;"></canvas>
             <div id="preview-placeholder" class="preview-placeholder">
                 Camera is off — click Start Camera above
             </div>
-            <p class="hint" style="margin-top: 12px;">Canvas stream uses WebSocket binary push with off-thread ImageBitmap decoding for minimal latency.</p>
+            <p class="hint" style="margin-top: 12px;">Preview uses WebRTC (H264 RTP) for sub-frame latency, with WebSocket canvas as fallback.</p>
         </div>
     </div>
 

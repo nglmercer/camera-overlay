@@ -33,6 +33,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(serve_index))
         .route("/config", get(serve_config))
         .route("/ws", get(ws_stream))
+        .route("/webrtc/offer", post(crate::webrtc_signaling::webrtc_offer))
         .route("/settings", get(get_config).post(set_config))
         .route("/cameras", get(list_cameras))
         .route("/status", get(camera_status))
