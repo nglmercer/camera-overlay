@@ -142,6 +142,28 @@ export class WebRTCStreamRenderer {
         this.videoEl.pause();
     }
 
+    /** Resolves when the RTCPeerConnection has finished gathering ICE candidates. */
+    private waitForIceGathering(): Promise<void> {
+        return new Promise<void>((resolve) => {
+            if (!this.pc || this.pc.iceGatheringState === 'complete') {
+                resolve();
+                return;
+            }
+            const check = () => {
+                if (this.pc?.iceGatheringState === 'complete') {
+                    this.pc.removeEventListener('icegatheringstatechange', check);
+                    resolve();
+                }
+            };
+            this.pc.addEventListener('icegatheringstatechange', check);
+            // Safety timeout: if gathering stalls, proceed with whatever we have
+            setTimeout(() => {
+                this.pc?.removeEventListener('icegatheringstatechange', check);
+                resolve();
+            }, 5000);
+        });
+    }
+
     private async negotiate(): Promise<void> {
         if (!this.active) return;
 
@@ -180,13 +202,22 @@ export class WebRTCStreamRenderer {
             const offer = await this.pc.createOffer();
             await this.pc.setLocalDescription(offer);
 
-            // Send SDP offer to Rust server
+            // Wait for ICE gathering to finish so all host candidates
+            // are embedded in the SDP before we send it to the server.
+            // Without this, the server receives an offer with no a=candidate
+            // lines, causing "no candidate pairs" and a dead connection.
+            await this.waitForIceGathering();
+
+            const localSdp = this.pc.localDescription;
+            if (!localSdp) throw new Error('No local description after ICE gathering');
+
+            // Send fully-gathered SDP offer to Rust server
             const response = await fetch('/webrtc/offer', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    type: offer.type,
-                    sdp: offer.sdp,
+                    type: localSdp.type,
+                    sdp: localSdp.sdp,
                 }),
             });
 
