@@ -45,13 +45,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/overlay", get(get_overlay).post(set_overlay))
         .route("/chunks/{*path}", get(serve_chunk))
         .route("/assets/{*path}", get(serve_asset))
+        .route("/index.js", get(|| async { serve_embedded("index.js") }))
+        .route("/config.js", get(|| async { serve_embedded("config.js") }))
         .route(
-            "/index.js",
-            get(|| async { serve_embedded("index.js") }),
-        )
-        .route(
-            "/config.js",
-            get(|| async { serve_embedded("config.js") }),
+            "/camera-overlay.svg",
+            get(|| async { serve_embedded("camera-overlay.svg") }),
         )
         .layer(middleware::from_fn_with_state(
             rl.clone(),

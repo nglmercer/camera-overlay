@@ -9,13 +9,18 @@ fn collect_files(root: &Path, current: &Path, files: &mut Vec<PathBuf>) {
         if path.is_dir() {
             collect_files(root, &path, files);
         } else {
-            files.push(path.strip_prefix(root).expect("asset path is outside static").to_path_buf());
+            files.push(
+                path.strip_prefix(root)
+                    .expect("asset path is outside static")
+                    .to_path_buf(),
+            );
         }
     }
 }
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
     let static_dir = manifest_dir.join("static");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR"));
     let generated_path = out_dir.join("embedded_assets.rs");
@@ -27,9 +32,8 @@ fn main() {
     collect_files(&static_dir, &static_dir, &mut files);
     files.sort();
 
-    let mut generated = String::from(
-        "pub fn get(path: &str) -> Option<&'static [u8]> {\n    match path {\n",
-    );
+    let mut generated =
+        String::from("pub fn get(path: &str) -> Option<&'static [u8]> {\n    match path {\n");
 
     for relative_path in files {
         let key = relative_path.to_string_lossy().replace('\\', "/");

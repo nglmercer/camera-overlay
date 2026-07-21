@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
@@ -111,4 +111,17 @@ pub fn create_tray(state: Arc<AppState>, port: u16) -> Result<(), Box<dyn std::e
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn embedded_tray_icon_is_a_valid_png() {
+        const ICON_PNG: &[u8] = include_bytes!("../assets/tray-icon.png");
+        let icon = image::load_from_memory(ICON_PNG)
+            .expect("embedded tray icon should decode")
+            .into_rgba8();
+
+        assert_eq!(icon.dimensions(), (64, 64));
+    }
 }

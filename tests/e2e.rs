@@ -110,7 +110,10 @@ async fn e2e_serves_all_web_assets_from_the_binary() {
             content_type,
             "content type for /{path}"
         );
-        assert!(!response.bytes().await.unwrap().is_empty(), "GET /{path} was empty");
+        assert!(
+            !response.bytes().await.unwrap().is_empty(),
+            "GET /{path} was empty"
+        );
     }
 }
 
