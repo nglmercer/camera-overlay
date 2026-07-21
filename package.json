@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build:web": "vite build"
+    "build:web": "vite build",
+    "dev:web": "vite"
   },
   "devDependencies": {
     "@types/bun": "latest",

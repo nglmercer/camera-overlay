@@ -4,33 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Camera Overlay</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body {
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background: transparent;
-        }
-        body {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        #camera-canvas {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            display: none;
-        }
-        #camera-canvas.mirror-h { transform: scaleX(-1); }
-        #camera-canvas.mirror-v { transform: scaleY(-1); }
-    </style>
   <script type="module" crossorigin src="/index.js"></script>
   <link rel="modulepreload" crossorigin href="/chunks/overlay.js">
+  <link rel="stylesheet" crossorigin href="/assets/index.css">
 </head>
 <body>
-    <!-- WebSocket canvas renderer for low-latency JPEG frame display -->
     <canvas id="camera-canvas"></canvas>
 </body>
 </html>

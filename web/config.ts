@@ -1,19 +1,21 @@
 import { CanvasStreamRenderer, CameraConfig, CameraDeviceInfo, CameraStatus, StartResponse } from './overlay';
+import { applyTranslations, getLocale, getLocaleOptions, setLocale, t, type Locale } from './i18n';
 
 class ConfigApp {
     private wsRenderer: CanvasStreamRenderer | null = null;
     private config: CameraConfig = {};
     private statusPoll: number | null = null;
+    private copyResetTimer: number | null = null;
 
     constructor() {
         const canvas = document.getElementById('preview-canvas') as HTMLCanvasElement;
-        if (canvas) {
-            this.wsRenderer = new CanvasStreamRenderer(canvas);
-        }
+        if (canvas) this.wsRenderer = new CanvasStreamRenderer(canvas);
         this.bindEvents();
     }
 
     public async init(): Promise<void> {
+        applyTranslations();
+        this.syncLanguageSelect();
         await this.loadConfig();
         await this.loadCameras();
         this.syncForm();
@@ -26,23 +28,46 @@ class ConfigApp {
         document.getElementById('btn-stop')?.addEventListener('click', () => this.stopCamera());
         document.getElementById('btn-copy-stream')?.addEventListener('click', () => this.copyUrl('stream-url'));
         document.getElementById('btn-copy-overlay')?.addEventListener('click', () => this.copyUrl('overlay-url'));
+        document.getElementById('language-select')?.addEventListener('change', (event) => {
+            const locale = (event.target as HTMLSelectElement).value as Locale;
+            setLocale(locale);
+            this.syncLanguageSelect();
+            this.setRunningUi(this.isRunning());
+            this.updatePreviewText();
+        });
 
         const formInputs = ['resolution', 'port', 'mirror-h', 'mirror-v', 'auto-start', 'fps', 'camera-select'];
-        formInputs.forEach(id => {
+        formInputs.forEach((id) => {
             document.getElementById(id)?.addEventListener('change', () => this.updateConfig());
         });
+    }
+
+    private syncLanguageSelect(): void {
+        const select = document.getElementById('language-select') as HTMLSelectElement | null;
+        if (!select) return;
+        select.innerHTML = '';
+        getLocaleOptions().forEach(({ value, label }) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            select.appendChild(option);
+        });
+        select.value = getLocale();
+        select.setAttribute('aria-label', t('language'));
     }
 
     private setError(msg: string): void {
         const el = document.getElementById('error-msg');
         if (!el) return;
-        if (msg) {
-            el.textContent = msg;
-            el.classList.add('visible');
-        } else {
-            el.textContent = '';
-            el.classList.remove('visible');
-        }
+        el.textContent = msg;
+        el.classList.toggle('visible', Boolean(msg));
+    }
+
+    private setSaveState(message: string, visible: boolean): void {
+        const el = document.getElementById('save-state');
+        if (!el) return;
+        el.textContent = message;
+        el.classList.toggle('visible', visible);
     }
 
     private setRunningUi(running: boolean): void {
@@ -51,43 +76,48 @@ class ConfigApp {
         const btnStop = document.getElementById('btn-stop') as HTMLButtonElement | null;
 
         if (badge) {
-            badge.textContent = running ? 'RUNNING' : 'OFF';
+            badge.textContent = running ? t('running') : t('off');
             badge.className = `status ${running ? 'status-on' : 'status-off'}`;
         }
         if (btnStart) btnStart.disabled = running;
         if (btnStop) btnStop.disabled = !running;
     }
 
-    private showCanvasPreview(): void {
-        const canvas = document.getElementById('preview-canvas');
+    private isRunning(): boolean {
+        return document.getElementById('status-badge')?.classList.contains('status-on') || false;
+    }
+
+    private updatePreviewText(): void {
         const placeholder = document.getElementById('preview-placeholder');
-        if (placeholder) placeholder.style.display = 'none';
-        if (this.wsRenderer && canvas) {
-            canvas.style.display = 'block';
-            this.wsRenderer.start();
-        }
+        if (placeholder) placeholder.textContent = t('previewEmpty');
+    }
+
+    private showCanvasPreview(): void {
+        document.body.classList.add('is-preview-visible');
+        this.wsRenderer?.start();
     }
 
     private hidePreview(): void {
-        const canvas = document.getElementById('preview-canvas');
-        const placeholder = document.getElementById('preview-placeholder');
+        document.body.classList.remove('is-preview-visible');
         this.wsRenderer?.stop();
-        if (canvas) canvas.style.display = 'none';
-        if (placeholder) placeholder.style.display = 'flex';
     }
 
     private async loadConfig(): Promise<void> {
         try {
             const r = await fetch('/settings');
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
             this.config = await r.json();
         } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
             console.error('Failed to load settings:', e);
+            this.setError(t('loadSettingsFailed', { message }));
         }
     }
 
     private async loadCameras(): Promise<void> {
         try {
             const r = await fetch('/cameras');
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const cameras: CameraDeviceInfo[] = await r.json();
             const sel = document.getElementById('camera-select') as HTMLSelectElement | null;
             if (!sel) return;
@@ -95,14 +125,14 @@ class ConfigApp {
             if (!cameras.length) {
                 const opt = document.createElement('option');
                 opt.value = '';
-                opt.textContent = 'No cameras found';
+                opt.textContent = t('noCamerasFound');
                 sel.appendChild(opt);
                 return;
             }
-            cameras.forEach(c => {
+            cameras.forEach((camera) => {
                 const opt = document.createElement('option');
-                opt.value = String(c.index);
-                opt.textContent = c.name;
+                opt.value = String(camera.index);
+                opt.textContent = camera.name;
                 sel.appendChild(opt);
             });
             if (this.config.selected_camera_index != null) {
@@ -111,7 +141,9 @@ class ConfigApp {
                 this.config.selected_camera_index = parseInt(sel.value, 10) || 0;
             }
         } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
             console.error('Failed to load cameras:', e);
+            this.setError(t('loadCamerasFailed', { message }));
         }
     }
 
@@ -138,29 +170,28 @@ class ConfigApp {
         const portEl = document.getElementById('port') as HTMLInputElement | null;
         const hEl = document.getElementById('mirror-h') as HTMLInputElement | null;
         const vEl = document.getElementById('mirror-v') as HTMLInputElement | null;
+        const port = portEl?.value || '8080';
+        const host = window.location.hostname || 'localhost';
+        const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const params = new URLSearchParams();
+        if (hEl?.checked) params.set('mirror_h', '1');
+        if (vEl?.checked) params.set('mirror_v', '1');
 
-        const port = portEl ? portEl.value : '8080';
-        const h = hEl ? hEl.checked : false;
-        const v = vEl ? vEl.checked : false;
-
-        let overlayUrl = `http://localhost:${port}/`;
-        const params: string[] = [];
-        if (h) params.push('mirror_h');
-        if (v) params.push('mirror_v');
-        if (params.length) overlayUrl += '?' + params.join('&');
+        let overlayUrl = `${protocol}//${host}:${port}/`;
+        if (params.size) overlayUrl += `?${params.toString()}`;
 
         const streamUrlInput = document.getElementById('stream-url') as HTMLInputElement | null;
         const overlayUrlInput = document.getElementById('overlay-url') as HTMLInputElement | null;
-
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        if (streamUrlInput) streamUrlInput.value = `${wsProtocol}//localhost:${port}/ws`;
+        if (streamUrlInput) streamUrlInput.value = `${wsProtocol}//${host}:${port}/ws`;
         if (overlayUrlInput) overlayUrlInput.value = overlayUrl;
     }
 
     private async updateConfig(): Promise<void> {
         this.updateUrls();
-        const getVal = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLSelectElement)?.value;
-        const getChecked = (id: string) => (document.getElementById(id) as HTMLInputElement)?.checked;
+        const card = document.getElementById('settings-heading')?.closest('.card');
+        const getVal = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLSelectElement)?.value || '';
+        const getChecked = (id: string) => (document.getElementById(id) as HTMLInputElement)?.checked || false;
 
         this.config.resolution = getVal('resolution') as 'highest' | 'medium' | 'lowest';
         this.config.port = parseInt(getVal('port'), 10) || 8080;
@@ -172,11 +203,23 @@ class ConfigApp {
         const cam = getVal('camera-select');
         if (cam !== '') this.config.selected_camera_index = parseInt(cam, 10);
 
-        await fetch('/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this.config)
-        });
+        this.setSaveState(t('saving'), true);
+        try {
+            const response = await fetch('/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.config),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            this.setSaveState(t('settingsSaved'), true);
+            window.setTimeout(() => this.setSaveState('', false), 1800);
+        } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            this.setError(t('loadSettingsFailed', { message }));
+            this.setSaveState('', false);
+        } finally {
+            if (card) card.classList.remove('is-saving');
+        }
     }
 
     private async refreshStatus(): Promise<void> {
@@ -185,12 +228,11 @@ class ConfigApp {
             if (!r.ok) return;
             const s: CameraStatus = await r.json();
             this.setRunningUi(s.running);
-            if (s.running) {
-                this.showCanvasPreview();
-            } else {
-                this.hidePreview();
-            }
-        } catch (_) { /* ignore status poll errors */ }
+            if (s.running) this.showCanvasPreview();
+            else this.hidePreview();
+        } catch (_) {
+            // Status polling is intentionally silent for an OBS-friendly control page.
+        }
     }
 
     private async startCamera(): Promise<void> {
@@ -202,11 +244,11 @@ class ConfigApp {
             await this.updateConfig();
             const r = await fetch('/start', { method: 'POST' });
             let body: StartResponse = { ok: false, running: false };
-            try { body = await r.json(); } catch (_) {}
+            try { body = await r.json(); } catch (_) { /* Empty response body. */ }
             if (!r.ok || body.ok === false) {
                 this.setRunningUi(false);
                 this.hidePreview();
-                this.setError(body.error || `Start failed (HTTP ${r.status})`);
+                this.setError(body.error || t('startFailed', { status: r.status }));
                 return;
             }
             this.setRunningUi(true);
@@ -214,25 +256,37 @@ class ConfigApp {
         } catch (e: unknown) {
             this.setRunningUi(false);
             this.hidePreview();
-            const err = e as Error;
-            this.setError(err.message || String(e));
-        } finally {
-            if (btn) btn.disabled = false;
+            this.setError(e instanceof Error ? e.message : String(e));
         }
     }
 
     private async stopCamera(): Promise<void> {
         this.setError('');
-        await fetch('/stop', { method: 'POST' });
-        this.setRunningUi(false);
-        this.hidePreview();
+        try {
+            const response = await fetch('/stop', { method: 'POST' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            this.setRunningUi(false);
+            this.hidePreview();
+        } catch (e) {
+            this.setError(e instanceof Error ? e.message : String(e));
+        }
     }
 
-    private copyUrl(id: string): void {
+    private async copyUrl(id: string): Promise<void> {
         const el = document.getElementById(id) as HTMLInputElement | null;
-        if (el) {
-            el.select();
-            navigator.clipboard.writeText(el.value);
+        if (!el) return;
+        try {
+            await navigator.clipboard.writeText(el.value);
+            const buttonId = id === 'stream-url' ? 'btn-copy-stream' : 'btn-copy-overlay';
+            const button = document.getElementById(buttonId);
+            if (!button) return;
+            button.textContent = t('copied');
+            if (this.copyResetTimer) window.clearTimeout(this.copyResetTimer);
+            this.copyResetTimer = window.setTimeout(() => {
+                button.textContent = t('copy');
+            }, 1600);
+        } catch (_) {
+            this.setError(t('copyFailed'));
         }
     }
 }

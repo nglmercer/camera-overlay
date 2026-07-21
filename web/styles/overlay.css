@@ -1,0 +1,5 @@
+body { display: flex; align-items: center; justify-content: center; overflow: hidden; background: transparent; }
+
+#camera-canvas { display: none; width: 100%; height: 100%; object-fit: contain; }
+#camera-canvas.mirror-h { transform: scaleX(-1); }
+#camera-canvas.mirror-v { transform: scaleY(-1); }

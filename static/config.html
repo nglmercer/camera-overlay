@@ -3,295 +3,156 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Overlay — Config</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            min-height: 100vh;
-            padding: 32px;
-        }
-        h1 { font-size: 24px; margin-bottom: 8px; }
-        .subtitle { color: #888; font-size: 14px; margin-bottom: 32px; }
-        .grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            max-width: 960px;
-        }
-        .card {
-            background: #252542;
-            border-radius: 12px;
-            padding: 24px;
-            border: 1px solid #333;
-        }
-        .card h2 {
-            font-size: 16px;
-            margin-bottom: 16px;
-            color: #7c83ff;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        label {
-            display: block;
-            font-size: 13px;
-            color: #aaa;
-            margin-bottom: 6px;
-        }
-        select, input[type="number"] {
-            width: 100%;
-            padding: 10px 12px;
-            border-radius: 6px;
-            border: 1px solid #444;
-            background: #1a1a2e;
-            color: #eee;
-            font-size: 14px;
-            margin-bottom: 16px;
-        }
-        select:focus, input:focus {
-            outline: none;
-            border-color: #7c83ff;
-        }
-        .toggle-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 16px;
-        }
-        .toggle-row span { font-size: 14px; }
-        .toggle {
-            position: relative;
-            width: 44px;
-            height: 24px;
-        }
-        .toggle input { opacity: 0; width: 0; height: 0; }
-        .slider {
-            position: absolute;
-            inset: 0;
-            background: #444;
-            border-radius: 24px;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-        .slider::before {
-            content: "";
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            left: 3px;
-            bottom: 3px;
-            background: #eee;
-            border-radius: 50%;
-            transition: 0.2s;
-        }
-        .toggle input:checked + .slider { background: #7c83ff; }
-        .toggle input:checked + .slider::before { transform: translateX(20px); }
-        .btn {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-        .btn-primary { background: #7c83ff; color: #fff; }
-        .btn-primary:hover { background: #636bff; }
-        .btn-danger { background: #ff4757; color: #fff; }
-        .btn-danger:hover { background: #e03545; }
-        .btn-success { background: #2ed573; color: #1a1a2e; }
-        .btn-success:hover { background: #26bd65; }
-        .btn-row {
-            display: flex;
-            gap: 10px;
-            margin-top: 8px;
-        }
-        .status {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .status-on { background: #2ed573; color: #1a1a2e; }
-        .status-off { background: #ff4757; color: #fff; }
-        .preview { grid-column: 1 / -1; }
-        .preview canvas, .preview video {
-            width: 100%;
-            max-height: 400px;
-            object-fit: contain;
-            border-radius: 8px;
-            background: #000;
-        }
-        .preview-placeholder {
-            width: 100%;
-            height: 240px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #1a1a2e;
-            border-radius: 8px;
-            color: #555;
-            font-size: 16px;
-        }
-        .url-box {
-            display: flex;
-            gap: 8px;
-            margin-top: 8px;
-        }
-        .url-box input {
-            flex: 1;
-            padding: 10px 12px;
-            border-radius: 6px;
-            border: 1px solid #444;
-            background: #1a1a2e;
-            color: #7c83ff;
-            font-size: 13px;
-            font-family: monospace;
-        }
-        .hint { font-size: 12px; color: #666; margin-top: 6px; }
-        .obs-info {
-            background: #2ed57320;
-            border: 1px solid #2ed573;
-            border-radius: 8px;
-            padding: 16px;
-            margin-top: 16px;
-        }
-        .obs-info h3 { color: #2ed573; font-size: 14px; margin-bottom: 8px; }
-        .obs-info ol { padding-left: 20px; font-size: 13px; color: #bbb; }
-        .obs-info li { margin-bottom: 4px; }
-        .nav {
-            margin-bottom: 24px;
-        }
-        .nav a {
-            color: #7c83ff;
-            text-decoration: none;
-            font-size: 14px;
-        }
-        .nav a:hover { text-decoration: underline; }
-        .error-msg {
-            margin-top: 12px;
-            padding: 10px 12px;
-            border-radius: 6px;
-            background: #ff475722;
-            border: 1px solid #ff4757;
-            color: #ff8a94;
-            font-size: 13px;
-            display: none;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-        .error-msg.visible { display: block; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    </style>
+    <title>Camera Overlay — Settings</title>
   <script type="module" crossorigin src="/config.js"></script>
   <link rel="modulepreload" crossorigin href="/chunks/overlay.js">
+  <link rel="stylesheet" crossorigin href="/assets/config.css">
 </head>
 <body>
-    <h1>Camera Overlay</h1>
-    <p class="subtitle">Configure your webcam overlay for OBS Browser Source</p>
-    <p class="nav"><a href="/">← Back to Overlay</a></p>
-
-    <div class="grid">
-        <!-- Status & Controls -->
-        <div class="card">
-            <h2>Status</h2>
-            <p style="margin-bottom: 16px;">
-                Camera: <span id="status-badge" class="status status-off">OFF</span>
-            </p>
-            <div class="btn-row">
-                <button id="btn-start" class="btn btn-success">Start Camera</button>
-                <button id="btn-stop" class="btn btn-danger" disabled>Stop Camera</button>
+    <main class="page-shell">
+        <header class="page-header">
+            <div>
+                <p class="eyebrow" data-i18n="pageTitle">Camera Overlay</p>
+                <h1>Camera Overlay — Settings</h1>
+                <p class="subtitle" data-i18n="configSubtitle">A simple, reliable webcam source for your OBS scenes.</p>
             </div>
-            <div id="error-msg" class="error-msg"></div>
+            <div class="language-control">
+                <label for="language-select" data-i18n="language">Language</label>
+                <select id="language-select" aria-label="Language">
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                    <option value="pt-BR">Português (Brasil)</option>
+                </select>
+            </div>
+        </header>
+
+        <a class="nav-link" href="/" data-i18n="backToOverlay">Open overlay</a>
+
+        <div class="grid">
+            <section class="card" aria-labelledby="status-heading">
+                <div class="card-header">
+                    <div>
+                        <p class="card-kicker" data-i18n="status">Camera status</p>
+                        <h2 id="status-heading" data-i18n="camera">Camera</h2>
+                    </div>
+                    <span id="status-badge" class="status status-off" aria-live="polite">OFF</span>
+                </div>
+                <div class="btn-row">
+                    <button id="btn-start" class="btn btn-success" data-i18n="startCamera">Start camera</button>
+                    <button id="btn-stop" class="btn btn-danger" data-i18n="stopCamera" disabled>Stop camera</button>
+                </div>
+                <div id="error-msg" class="error-msg" role="alert"></div>
+                <div id="save-state" class="save-state" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="card" aria-labelledby="settings-heading">
+                <div class="card-header">
+                    <div>
+                        <p class="card-kicker">01</p>
+                        <h2 id="settings-heading" data-i18n="cameraSettings">Camera settings</h2>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="camera-select" data-i18n="cameraDevice">Camera device</label>
+                    <select id="camera-select">
+                        <option value="" data-i18n="loadingCameras">Loading cameras…</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="resolution" data-i18n="resolutionPreference">Resolution preference</label>
+                    <select id="resolution">
+                        <option value="highest" data-i18n="highest">Highest available</option>
+                        <option value="medium" data-i18n="medium">Medium · around 720p</option>
+                        <option value="lowest" data-i18n="lowest">Lowest available</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="fps" data-i18n="targetFps">Target FPS</label>
+                    <input type="number" id="fps" min="1" max="120" value="30">
+                </div>
+            </section>
+
+            <section class="card" aria-labelledby="transform-heading">
+                <div class="card-header">
+                    <div>
+                        <p class="card-kicker">02</p>
+                        <h2 id="transform-heading" data-i18n="transformAndAutoStart">Transform & startup</h2>
+                    </div>
+                </div>
+                <div class="toggle-row">
+                    <span data-i18n="mirrorHorizontally">Mirror horizontally</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="mirror-h">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-row">
+                    <span data-i18n="mirrorVertically">Mirror vertically</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="mirror-v">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-row">
+                    <span data-i18n="autoStart">Start camera with the server</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="auto-start">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="card" aria-labelledby="obs-heading">
+                <div class="card-header">
+                    <div>
+                        <p class="card-kicker">03</p>
+                        <h2 id="obs-heading" data-i18n="obsIntegration">OBS integration</h2>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="port" data-i18n="httpPort">HTTP port</label>
+                    <input type="number" id="port" min="1024" max="65535" value="8080">
+                </div>
+                <div class="field">
+                    <label for="overlay-url" data-i18n="overlayUrl">Overlay URL · OBS Browser Source</label>
+                    <div class="url-box">
+                        <input type="text" id="overlay-url" readonly aria-label="Overlay URL">
+                        <button id="btn-copy-overlay" class="btn btn-primary" data-i18n="copy">Copy</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="stream-url" data-i18n="websocketStreamEndpoint">WebSocket stream endpoint</label>
+                    <div class="url-box">
+                        <input type="text" id="stream-url" readonly aria-label="WebSocket stream endpoint">
+                        <button id="btn-copy-stream" class="btn btn-primary" data-i18n="copy">Copy</button>
+                    </div>
+                </div>
+                <div class="obs-info">
+                    <h3 data-i18n="quickSetup">Quick setup</h3>
+                    <ol>
+                        <li data-i18n-html="quickSetupStep1">In OBS, add a <strong>Browser</strong> source</li>
+                        <li data-i18n="quickSetupStep2">Use the overlay URL above</li>
+                        <li data-i18n="quickSetupStep3">Match the width and height to your camera</li>
+                        <li data-i18n="quickSetupStep4">Enable “Shutdown source when not visible”</li>
+                    </ol>
+                </div>
+            </section>
+
+            <section class="card card-wide preview" aria-labelledby="preview-heading">
+                <div class="card-header">
+                    <div>
+                        <p class="card-kicker">04</p>
+                        <h2 id="preview-heading" data-i18n="livePreview">Live preview</h2>
+                        <p class="card-description" data-i18n="previewHint">Preview uses WebSocket for low-latency JPEG streaming.</p>
+                    </div>
+                </div>
+                <div class="preview-frame">
+                    <canvas id="preview-canvas"></canvas>
+                    <div id="preview-placeholder" class="preview-placeholder" data-i18n="previewEmpty">Camera is off. Start it to see a preview.</div>
+                </div>
+            </section>
         </div>
-
-        <!-- Camera Settings -->
-        <div class="card">
-            <h2>Camera Settings</h2>
-            <label for="camera-select">Camera Device</label>
-            <select id="camera-select">
-                <option value="">Loading cameras...</option>
-            </select>
-
-            <label for="resolution">Resolution Preference</label>
-            <select id="resolution">
-                <option value="highest">Highest</option>
-                <option value="medium">Medium (~720p)</option>
-                <option value="lowest">Lowest</option>
-            </select>
-
-            <label for="fps">Target FPS</label>
-            <input type="number" id="fps" min="1" max="120" value="30">
-        </div>
-
-        <!-- Display & Transform Settings -->
-        <div class="card">
-            <h2>Transform & Auto-Start</h2>
-            <div class="toggle-row">
-                <span>Mirror Horizontally</span>
-                <label class="toggle">
-                    <input type="checkbox" id="mirror-h">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="toggle-row">
-                <span>Mirror Vertically</span>
-                <label class="toggle">
-                    <input type="checkbox" id="mirror-v">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="toggle-row">
-                <span>Auto-start camera on server launch</span>
-                <label class="toggle">
-                    <input type="checkbox" id="auto-start">
-                    <span class="slider"></span>
-                </label>
-            </div>
-        </div>
-
-        <!-- Server & OBS Integration -->
-        <div class="card">
-            <h2>OBS Integration</h2>
-            <label for="port">HTTP Port</label>
-            <input type="number" id="port" min="1024" max="65535" value="8080">
-
-            <label for="overlay-url">Overlay URL (OBS Browser Source)</label>
-            <div class="url-box">
-                <input type="text" id="overlay-url" readonly>
-                <button id="btn-copy-overlay" class="btn btn-primary">Copy</button>
-            </div>
-
-            <label for="stream-url" style="margin-top: 12px;">WebSocket Stream Endpoint</label>
-            <div class="url-box">
-                <input type="text" id="stream-url" readonly>
-                <button id="btn-copy-stream" class="btn btn-primary">Copy</button>
-            </div>
-
-            <div class="obs-info">
-                <h3>Quick Setup</h3>
-                <ol>
-                    <li>In OBS, add a <strong>Browser Source</strong></li>
-                    <li>Set URL to the Overlay URL above</li>
-                    <li>Set width/height to match your camera</li>
-                    <li>Check "Shutdown source when not visible"</li>
-                </ol>
-            </div>
-        </div>
-
-        <!-- Live Preview -->
-        <div class="card preview">
-            <h2>Live Preview</h2>
-            <canvas id="preview-canvas" style="display: none;"></canvas>
-            <div id="preview-placeholder" class="preview-placeholder">
-                Camera is off — click Start Camera above
-            </div>
-            <p class="hint" style="margin-top: 12px;">Preview uses WebSocket for low-latency JPEG frame streaming.</p>
-        </div>
-    </div>
+    </main>
 
 </body>
 </html>
