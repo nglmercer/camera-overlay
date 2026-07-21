@@ -52,7 +52,7 @@ async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {
 
     let stream = BroadcastStream::new(rx).filter_map(|r| {
         match r {
-            Ok(frame) => Some(Ok::<Bytes, std::convert::Infallible>(frame.to_mjpeg_part())),
+            Ok(frame) => Some(Ok::<Bytes, std::convert::Infallible>(frame.mjpeg_part.clone())),
             Err(_) => None,
         }
     });
@@ -82,7 +82,7 @@ async fn snapshot(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 header::CONTENT_TYPE,
                 HeaderValue::from_static("image/jpeg"),
             );
-            (headers, f.to_jpeg_bytes()).into_response()
+            (headers, (*f.jpeg_data).clone()).into_response()
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,

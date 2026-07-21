@@ -20,6 +20,8 @@ use tokio::sync::broadcast;
 use crate::config::ResolutionPreference;
 
 static RUNNING: Lazy<Arc<AtomicBool>> = Lazy::new(|| Arc::new(AtomicBool::new(false)));
+static THREAD_HANDLE: Lazy<Arc<Mutex<Option<thread::JoinHandle<()>>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(None)));
 
 #[derive(Clone)]
 pub struct CameraFrame {
@@ -113,7 +115,7 @@ fn encode_jpeg(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u
     let image = ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, rgb.to_vec())
         .ok_or("Failed to create image buffer")?;
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity((width * height * 3) as usize / 4);
     let mut cursor = Cursor::new(&mut buf);
     let mut encoder = JpegEncoder::new_with_quality(&mut cursor, quality);
     encoder
@@ -198,24 +200,124 @@ mod tests {
     }
 
     #[test]
-    fn test_camera_frame_jpeg_to_mjpeg_part() {
-        let frame = CameraFrame::Jpeg(vec![0xFF, 0xD8, 0xFF, 0xD9]);
-        let part = frame.to_mjpeg_part();
-        let expected = b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xFF\xD8\xFF\xD9\r\n";
-        assert_eq!(&part[..], expected);
+    fn test_camera_frame_new_builds_mjpeg_part() {
+        let frame = CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        let expected =
+            b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xFF\xD8\xFF\xD9\r\n";
+        assert_eq!(&frame.mjpeg_part[..], expected);
     }
 
     #[test]
-    fn test_camera_frame_raw_rgb_to_jpeg() {
-        let frame = CameraFrame::RawRgb {
-            data: vec![255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0],
-            width: 2,
-            height: 2,
-        };
-        let jpeg = frame.to_jpeg_bytes();
-        assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
-        assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
+    fn test_camera_frame_clone_is_cheap() {
+        let frame = CameraFrame::new(vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        let clone = frame.clone();
+        assert_eq!(frame.mjpeg_part, clone.mjpeg_part);
+        assert!(Arc::ptr_eq(&frame.jpeg_data, &clone.jpeg_data));
     }
+
+    #[test]
+    fn test_camera_frame_from_raw_rgb() {
+        let rgb = vec![255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0];
+        let jpeg = encode_jpeg(&rgb, 2, 2, 80).unwrap();
+        let frame = CameraFrame::new(jpeg);
+        assert_eq!(&frame.jpeg_data[..2], &[0xFF, 0xD8]);
+        assert_eq!(&frame.jpeg_data[frame.jpeg_data.len() - 2..], &[0xFF, 0xD9]);
+    }
+
+    #[test]
+    fn test_broadcast_pipeline_no_memory_spike() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let start_rss = get_rss_kb();
+
+            let (frame_tx, _keepalive) = broadcast::channel::<CameraFrame>(2);
+            let producer_tx = frame_tx.clone();
+
+            let sub1 = frame_tx.subscribe();
+            let sub2 = frame_tx.subscribe();
+            let sub3 = frame_tx.subscribe();
+
+            let h1 = tokio::spawn(consume_stream(sub1, 500));
+            let h2 = tokio::spawn(consume_stream(sub2, 500));
+            let h3 = tokio::spawn(consume_stream(sub3, 500));
+
+            let producer = tokio::spawn(async move {
+                let jpeg = vec![0xFFu8; 100_000];
+                for _ in 0..500 {
+                    let frame = CameraFrame::new(jpeg.clone());
+                    let _ = producer_tx.send(frame);
+                }
+            });
+
+            let _ = producer.await;
+            let _ = h1.await;
+            let _ = h2.await;
+            let _ = h3.await;
+
+            drop(frame_tx);
+
+            let end_rss = get_rss_kb();
+            match (start_rss, end_rss) {
+                (Some(start), Some(end)) => {
+                    let growth_kb = end.saturating_sub(start);
+                    assert!(
+                        growth_kb < 50_000,
+                        "RSS grew by {growth_kb} kb — likely a leak (start={start}, end={end})"
+                    );
+                }
+                _ => {} // /proc not available (non-Linux), skip assertion
+            }
+        });
+    }
+
+    #[test]
+    fn test_clone_does_not_deep_copy() {
+        let jpeg = vec![0xFFu8; 1_000_000];
+        let frame = CameraFrame::new(jpeg);
+        let mut clones: Vec<CameraFrame> = Vec::new();
+        for _ in 0..100 {
+            clones.push(frame.clone());
+        }
+        for c in &clones {
+            assert!(Arc::ptr_eq(&frame.jpeg_data, &c.jpeg_data));
+        }
+        let final_size = std::mem::size_of::<CameraFrame>() * 101;
+        assert!(
+            final_size < 10_000,
+            "CameraFrame size exploded: {final_size} bytes for 101 references"
+        );
+    }
+}
+
+#[cfg(test)]
+async fn consume_stream(
+    rx: tokio::sync::broadcast::Receiver<CameraFrame>,
+    expected: usize,
+) -> usize {
+    use tokio_stream::wrappers::BroadcastStream;
+    use tokio_stream::StreamExt;
+    let mut stream = BroadcastStream::new(rx);
+    let mut count = 0;
+    while let Some(Ok(frame)) = stream.next().await {
+        let _ = frame.mjpeg_part.clone();
+        count += 1;
+        if count >= expected {
+            break;
+        }
+    }
+    count
+}
+
+#[cfg(test)]
+fn get_rss_kb() -> Option<usize> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if line.starts_with("VmRSS:") {
+            let num = line.split_whitespace().nth(1)?;
+            return num.parse().ok();
+        }
+    }
+    None
 }
 
 impl CameraController {
@@ -275,7 +377,7 @@ impl CameraController {
         let latest = Arc::clone(&self.latest);
         RUNNING.store(true, Ordering::SeqCst);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::Exact(best));
 
             let mut camera = match Camera::new(CameraIndex::Index(idx), requested) {
@@ -309,7 +411,7 @@ impl CameraController {
                 };
 
                 let camera_frame = if matches!(frame.source_frame_format(), FrameFormat::MJPEG) {
-                    CameraFrame::Jpeg(frame.buffer().to_vec())
+                    CameraFrame::new(frame.buffer().to_vec())
                 } else {
                     let decoded = match frame.decode_image::<RgbFormat>() {
                         Ok(d) => d,
@@ -318,15 +420,19 @@ impl CameraController {
                     let width = decoded.width();
                     let height = decoded.height();
                     let rgb = decoded.into_raw();
-                    CameraFrame::RawRgb {
-                        data: rgb,
-                        width,
-                        height,
+                    match encode_jpeg(&rgb, width, height, 75) {
+                        Ok(jpeg) => CameraFrame::new(jpeg),
+                        Err(e) => {
+                            log::warn!("Encode failed: {e}");
+                            continue;
+                        }
                     }
                 };
 
                 *latest.lock() = Some(camera_frame.clone());
-                let _ = frame_tx.send(camera_frame);
+                if frame_tx.send(camera_frame).is_err() {
+                    log::debug!("No active subscribers");
+                }
 
                 last = Instant::now();
             }
@@ -334,11 +440,21 @@ impl CameraController {
             let _ = camera.stop_stream();
             log::info!("Camera stream stopped");
         });
+
+        *THREAD_HANDLE.lock() = Some(handle);
     }
 
     pub fn stop(&self) {
         RUNNING.store(false, Ordering::SeqCst);
+        self.join_camera_thread();
         *self.latest.lock() = None;
+    }
+
+    fn join_camera_thread(&self) {
+        let handle = THREAD_HANDLE.lock().take();
+        if let Some(h) = handle {
+            let _ = h.join();
+        }
     }
 
     pub fn latest_frame(&self) -> Option<CameraFrame> {
