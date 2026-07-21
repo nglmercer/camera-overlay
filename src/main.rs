@@ -33,6 +33,10 @@ async fn main() {
     log::info!("WS Stream: ws://localhost:{port}/ws");
     log::info!("Add the overlay URL as a Browser Source in OBS");
 
+    if let Err(e) = camera_overlay::tray::create_tray(Arc::clone(&state), port) {
+        log::warn!("Failed to create tray icon: {e}");
+    }
+
     if config.auto_start {
         let snapshot = camera_overlay::camera::CameraConfigSnapshot {
             camera_index: config.selected_camera_index.unwrap_or(0),

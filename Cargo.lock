@@ -415,6 +415,7 @@ dependencies = [
  "dirs 5.0.1",
  "env_logger",
  "futures-util",
+ "glib",
  "governor",
  "gtk",
  "image",

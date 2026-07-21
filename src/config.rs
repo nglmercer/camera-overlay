@@ -114,7 +114,7 @@ mod tests {
             mirror_vertical: false,
             target_fps: 60,
             auto_start: true,
-            port: 9090,
+            port: 8080,
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -126,7 +126,7 @@ mod tests {
         assert!(!parsed.mirror_vertical);
         assert_eq!(parsed.target_fps, 60);
         assert!(parsed.auto_start);
-        assert_eq!(parsed.port, 9090);
+        assert_eq!(parsed.port, 8080);
     }
 
     #[test]

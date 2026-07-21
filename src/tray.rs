@@ -50,47 +50,60 @@ pub fn create_tray(state: Arc<AppState>, port: u16) -> Result<(), Box<dyn std::e
             }
         };
 
-        while let Ok(event) = MenuEvent::receiver().recv() {
-            if event.id() == start_stop.id() {
-                let running = CAMERA_RUNNING.load(Ordering::SeqCst);
-                if running {
-                    CAMERA_RUNNING.store(false, Ordering::SeqCst);
-                    start_stop.set_text("Start Camera");
-                    let camera = Arc::clone(&state.camera);
-                    std::thread::spawn(move || {
-                        camera.stop();
-                    });
-                } else {
-                    CAMERA_RUNNING.store(true, Ordering::SeqCst);
-                    start_stop.set_text("Stop Camera");
-                    let camera = Arc::clone(&state.camera);
-                    let frame_tx = state.frame_tx.clone();
-                    let snapshot = crate::camera::CameraConfigSnapshot {
-                        camera_index: state
-                            .config
-                            .lock()
-                            .selected_camera_index
-                            .unwrap_or(0),
-                        resolution: state.config.lock().resolution.clone(),
-                        target_fps: state.config.lock().target_fps,
-                    };
-                    std::thread::spawn(move || {
-                        if let Err(e) = camera.start(frame_tx, snapshot) {
-                            log::error!("Camera start failed: {e}");
-                            CAMERA_RUNNING.store(false, Ordering::SeqCst);
-                        }
-                    });
+        log::info!("Tray icon created");
+
+        let start_stop_clone = start_stop.clone();
+        let open_config_clone = open_config.clone();
+        let restart_clone = restart.clone();
+        let quit_clone = quit.clone();
+        let state_clone = Arc::clone(&state);
+
+        glib::idle_add_local(move || {
+            while let Ok(event) = MenuEvent::receiver().try_recv() {
+                if event.id() == start_stop_clone.id() {
+                    let running = CAMERA_RUNNING.load(Ordering::SeqCst);
+                    if running {
+                        CAMERA_RUNNING.store(false, Ordering::SeqCst);
+                        start_stop_clone.set_text("Start Camera");
+                        let camera = Arc::clone(&state_clone.camera);
+                        std::thread::spawn(move || {
+                            camera.stop();
+                        });
+                    } else {
+                        CAMERA_RUNNING.store(true, Ordering::SeqCst);
+                        start_stop_clone.set_text("Stop Camera");
+                        let camera = Arc::clone(&state_clone.camera);
+                        let frame_tx = state_clone.frame_tx.clone();
+                        let snapshot = crate::camera::CameraConfigSnapshot {
+                            camera_index: state_clone
+                                .config
+                                .lock()
+                                .selected_camera_index
+                                .unwrap_or(0),
+                            resolution: state_clone.config.lock().resolution.clone(),
+                            target_fps: state_clone.config.lock().target_fps,
+                        };
+                        std::thread::spawn(move || {
+                            if let Err(e) = camera.start(frame_tx, snapshot) {
+                                log::error!("Camera start failed: {e}");
+                                CAMERA_RUNNING.store(false, Ordering::SeqCst);
+                            }
+                        });
+                    }
+                } else if event.id() == open_config_clone.id() {
+                    let url = format!("http://localhost:{port}/config");
+                    let _ = open::that(url);
+                } else if event.id() == restart_clone.id() {
+                    let _ = std::process::Command::new(std::env::current_exe().unwrap()).spawn();
+                    std::process::exit(0);
+                } else if event.id() == quit_clone.id() {
+                    std::process::exit(0);
                 }
-            } else if event.id() == open_config.id() {
-                let url = format!("http://localhost:{port}/config");
-                let _ = open::that(url);
-            } else if event.id() == restart.id() {
-                let _ = std::process::Command::new(std::env::current_exe().unwrap()).spawn();
-                std::process::exit(0);
-            } else if event.id() == quit.id() {
-                std::process::exit(0);
             }
-        }
+            glib::ControlFlow::Continue
+        });
+
+        gtk::main();
     });
 
     Ok(())
