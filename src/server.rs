@@ -42,6 +42,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/chunks",
             tower_http::services::ServeDir::new("static/chunks"),
         )
+        .nest_service(
+            "/assets",
+            tower_http::services::ServeDir::new("static/assets"),
+        )
         .route(
             "/index.js",
             get(|| async {
