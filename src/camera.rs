@@ -39,13 +39,26 @@ impl CameraFrame {
     }
 
     fn build_mjpeg_part(jpeg_data: &[u8]) -> bytes::Bytes {
-        let header_fmt = format!(
-            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
-            jpeg_data.len()
-        );
-        let total = header_fmt.len() + jpeg_data.len() + 2;
+        let header = b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ";
+        let header_end = b"\r\n\r\n";
+        let total = header.len() + 10 + header_end.len() + jpeg_data.len() + 2;
         let mut part = Vec::with_capacity(total);
-        part.extend_from_slice(header_fmt.as_bytes());
+        part.extend_from_slice(header);
+        let mut n = jpeg_data.len();
+        let mut buf = [0u8; 10];
+        let mut pos = 10;
+        if n == 0 {
+            pos -= 1;
+            buf[pos] = b'0';
+        } else {
+            while n > 0 {
+                pos -= 1;
+                buf[pos] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+        }
+        part.extend_from_slice(&buf[pos..]);
+        part.extend_from_slice(header_end);
         part.extend_from_slice(jpeg_data);
         part.extend_from_slice(b"\r\n");
         bytes::Bytes::from(part)

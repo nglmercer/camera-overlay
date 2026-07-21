@@ -8,9 +8,11 @@ use tokio::sync::broadcast;
 
 use config::CameraConfig;
 
+const BROADCAST_CAPACITY: usize = 8;
+
 pub async fn run_server(port: u16) -> std::io::Result<Arc<server::AppState>> {
     let camera = Arc::new(camera::CameraController::new());
-    let (frame_tx, _rx) = broadcast::channel(2);
+    let (frame_tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
 
     let state = Arc::new(server::AppState {
         config: parking_lot::Mutex::new(CameraConfig::default()),

@@ -1,13 +1,15 @@
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+const BROADCAST_CAPACITY: usize = 8;
+
 #[tokio::main]
 async fn main() {
     camera_overlay::logger::init();
 
     let config = camera_overlay::config::load();
     let camera = Arc::new(camera_overlay::camera::CameraController::new());
-    let (frame_tx, _rx) = broadcast::channel(2);
+    let (frame_tx, _rx) = broadcast::channel(BROADCAST_CAPACITY);
 
     let state = Arc::new(camera_overlay::server::AppState {
         config: parking_lot::Mutex::new(config.clone()),

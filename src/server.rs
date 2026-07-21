@@ -11,10 +11,13 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tower_http::cors::CorsLayer;
 
 use crate::camera::{CameraController, CameraFrame};
 use crate::config::CameraConfig;
+
+const MAX_LAGGED_FRAMES: u64 = 10;
 
 pub struct AppState {
     pub config: parking_lot::Mutex<CameraConfig>,
@@ -50,10 +53,15 @@ async fn serve_config() -> Html<&'static str> {
 async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {
     let rx = state.frame_tx.subscribe();
 
-    let stream = BroadcastStream::new(rx).filter_map(|r| {
-        match r {
-            Ok(frame) => Some(Ok::<Bytes, std::convert::Infallible>(frame.mjpeg_part.clone())),
-            Err(_) => Some(Ok::<Bytes, std::convert::Infallible>(Bytes::new())),
+    let stream = BroadcastStream::new(rx).filter_map(|r| match r {
+        Ok(frame) => Some(Ok::<Bytes, std::convert::Infallible>(frame.mjpeg_part.clone())),
+        Err(BroadcastStreamRecvError::Lagged(n)) if n <= MAX_LAGGED_FRAMES => {
+            log::debug!("Subscriber lagged by {n} frames, continuing");
+            Some(Ok::<Bytes, std::convert::Infallible>(Bytes::new()))
+        }
+        Err(BroadcastStreamRecvError::Lagged(n)) => {
+            log::warn!("Subscriber lagged by {n} frames, disconnecting");
+            None
         }
     });
 
