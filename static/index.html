@@ -33,6 +33,7 @@
         const img = document.getElementById('camera');
         if (params.has('mirror_h')) img.classList.add('mirror-h');
         if (params.has('mirror_v')) img.classList.add('mirror-v');
+        window.addEventListener('beforeunload', () => { img.src = ''; });
     </script>
 </body>
 </html>
