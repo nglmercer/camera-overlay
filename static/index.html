@@ -21,100 +21,10 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
-            display: none;
         }
-        #camera.active { display: block; }
-        #placeholder {
-            color: rgba(255,255,255,0.5);
-            font-family: sans-serif;
-            font-size: 24px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 16px;
-        }
-        #placeholder.hidden { display: none; }
-        .controls {
-            position: fixed;
-            bottom: 16px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 8px;
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-        .controls:hover { opacity: 1; }
-        .controls button {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 4px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        .controls button:hover { background: rgba(0,0,0,0.9); }
     </style>
 </head>
 <body>
-    <img id="camera" />
-    <div id="placeholder">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-        </svg>
-        <span>Camera Off</span>
-    </div>
-    <div class="controls">
-        <button onclick="toggleCamera()">Toggle</button>
-        <button onclick="toggleMirrorH()">Mirror H</button>
-        <button onclick="toggleMirrorV()">Mirror V</button>
-    </div>
-    <script>
-        const img = document.getElementById('camera');
-        const placeholder = document.getElementById('placeholder');
-        let running = false;
-
-        function toggleCamera() {
-            if (running) {
-                fetch('/stop', { method: 'POST' });
-                img.classList.remove('active');
-                placeholder.classList.remove('hidden');
-                running = false;
-            } else {
-                fetch('/start', { method: 'POST' });
-                img.src = '/stream#' + Date.now();
-                img.classList.add('active');
-                placeholder.classList.add('hidden');
-                running = true;
-            }
-        }
-
-        function toggleMirrorH() {
-            fetch('/config')
-                .then(r => r.json())
-                .then(c => {
-                    c.mirror_horizontal = !c.mirror_horizontal;
-                    fetch('/config', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(c)
-                    });
-                });
-        }
-
-        function toggleMirrorV() {
-            fetch('/config')
-                .then(r => r.json())
-                .then(c => {
-                    c.mirror_vertical = !c.mirror_vertical;
-                    fetch('/config', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(c)
-                    });
-                });
-        }
-    </script>
+    <img id="camera" src="/stream" />
 </body>
 </html>

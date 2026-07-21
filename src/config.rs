@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraConfig {
     #[serde(default)]
     pub selected_camera_index: Option<u32>,
@@ -18,6 +18,20 @@ pub struct CameraConfig {
     pub auto_start: bool,
     #[serde(default = "default_port")]
     pub port: u16,
+}
+
+impl Default for CameraConfig {
+    fn default() -> Self {
+        Self {
+            selected_camera_index: None,
+            resolution: ResolutionPreference::default(),
+            mirror_horizontal: false,
+            mirror_vertical: false,
+            target_fps: default_target_fps(),
+            auto_start: default_auto_start(),
+            port: default_port(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

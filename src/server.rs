@@ -23,13 +23,15 @@ pub struct AppState {
 }
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
+const CONFIG_HTML: &str = include_str!("../static/config.html");
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(serve_index))
+        .route("/config", get(serve_config))
         .route("/stream", get(mjpeg_stream))
         .route("/snapshot", get(snapshot))
-        .route("/config", get(get_config).post(set_config))
+        .route("/settings", get(get_config).post(set_config))
         .route("/cameras", get(list_cameras))
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
@@ -39,6 +41,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
 async fn serve_index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+async fn serve_config() -> Html<&'static str> {
+    Html(CONFIG_HTML)
 }
 
 async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {

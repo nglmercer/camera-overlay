@@ -2,12 +2,12 @@ mod camera;
 mod config;
 mod logger;
 mod server;
-mod trayicon;
 
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     logger::init();
 
     let config = config::load();
@@ -20,38 +20,25 @@ fn main() {
         frame_tx: frame_tx.clone(),
     });
 
-    let state_clone = Arc::clone(&state);
-
     let port = config.port;
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(async {
-            let app = server::build_router(state_clone);
-            let addr = format!("0.0.0.0:{port}");
-            let listener = match tokio::net::TcpListener::bind(&addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    log::error!("Failed to bind to {addr}: {e}");
-                    return;
-                }
-            };
-            log::info!("Camera server running at http://localhost:{port}");
-            log::info!("Add http://localhost:{port} as a Browser Source in OBS");
-            if let Err(e) = axum::serve(listener, app).await {
-                log::error!("Server error: {e}");
-            }
-        });
-    });
+    let addr = format!("0.0.0.0:{port}");
 
-    let _tray = trayicon::setup();
+    log::info!("Camera server running at http://localhost:{port}");
+    log::info!("Overlay:  http://localhost:{port}/");
+    log::info!("Config:   http://localhost:{port}/config");
+    log::info!("Stream:   http://localhost:{port}/stream");
+    log::info!("Add the overlay or stream URL as a Browser Source in OBS");
 
-    log::info!("Server running. Press Ctrl+C to stop.");
-    log::info!(
-        "Open http://localhost:{}/ in your browser or add it as an OBS Browser Source",
-        config.port
-    );
+    let app = server::build_router(state);
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            log::error!("Failed to bind to {addr}: {e}");
+            return;
+        }
+    };
 
-    loop {
-        std::thread::park();
+    if let Err(e) = axum::serve(listener, app).await {
+        log::error!("Server error: {e}");
     }
 }
