@@ -1,29 +1,30 @@
+import { OverlayApi, restoreOverlayState } from './api';
 import { CanvasStreamRenderer } from './overlay';
 
 class OverlayApp {
-    private wsRenderer: CanvasStreamRenderer | null = null;
-    private canvas: HTMLCanvasElement;
+    private readonly wsRenderer: CanvasStreamRenderer;
+    private readonly canvas: HTMLCanvasElement;
+    private readonly api: OverlayApi;
     private isStreaming = false;
 
     constructor() {
-        this.canvas = document.getElementById('camera-canvas') as HTMLCanvasElement;
+        const canvas = document.getElementById('camera-canvas') as HTMLCanvasElement;
+        if (!canvas) throw new Error('Camera canvas element not found');
 
-        if (!this.canvas) {
-            throw new Error('Camera canvas element not found');
-        }
-
-        this.wsRenderer = new CanvasStreamRenderer(this.canvas);
+        this.canvas = canvas;
+        this.wsRenderer = new CanvasStreamRenderer(canvas);
+        this.api = new OverlayApi(canvas, this.wsRenderer);
+        window.cameraOverlay = this.api;
+        restoreOverlayState(this.api);
         this.applyParams();
     }
 
     private applyParams(): void {
         const params = new URLSearchParams(window.location.search);
-        if (params.has('mirror_h')) {
-            this.canvas.classList.add('mirror-h');
-        }
-        if (params.has('mirror_v')) {
-            this.canvas.classList.add('mirror-v');
-        }
+        this.api.mirror({
+            h: params.has('mirror_h') || this.api.getState().mirrorH,
+            v: params.has('mirror_v') || this.api.getState().mirrorV,
+        });
     }
 
     public async init(): Promise<void> {
@@ -50,12 +51,14 @@ class OverlayApp {
     }
 
     private startStream(): void {
+        this.api.show();
         this.canvas.style.display = 'block';
-        this.wsRenderer?.start();
+        this.wsRenderer.start();
     }
 
     private stopStream(): void {
-        this.wsRenderer?.stop();
+        this.wsRenderer.stop();
+        this.api.hide();
         this.canvas.style.display = 'none';
     }
 }

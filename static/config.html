@@ -30,11 +30,9 @@
 
         <div class="grid">
             <section class="card" aria-labelledby="status-heading">
-                <div class="card-header">
-                    <div>
-                        <p class="card-kicker" data-i18n="status">Camera status</p>
-                        <h2 id="status-heading" data-i18n="camera">Camera</h2>
-                    </div>
+                <div class="card-header card-header--row">
+                    <p class="card-kicker" data-i18n="status">Camera status</p>
+                    <h2 id="status-heading" data-i18n="camera">Camera</h2>
                     <span id="status-badge" class="status status-off" aria-live="polite">OFF</span>
                 </div>
                 <div class="btn-row">
@@ -47,10 +45,8 @@
 
             <section class="card" aria-labelledby="settings-heading">
                 <div class="card-header">
-                    <div>
-                        <p class="card-kicker">01</p>
-                        <h2 id="settings-heading" data-i18n="cameraSettings">Camera settings</h2>
-                    </div>
+                    <p class="card-kicker">01</p>
+                    <h2 id="settings-heading" data-i18n="cameraSettings">Camera settings</h2>
                 </div>
                 <div class="field">
                     <label for="camera-select" data-i18n="cameraDevice">Camera device</label>
@@ -74,10 +70,8 @@
 
             <section class="card" aria-labelledby="transform-heading">
                 <div class="card-header">
-                    <div>
-                        <p class="card-kicker">02</p>
-                        <h2 id="transform-heading" data-i18n="transformAndAutoStart">Transform & startup</h2>
-                    </div>
+                    <p class="card-kicker">02</p>
+                    <h2 id="transform-heading" data-i18n="transformAndAutoStart">Transform & startup</h2>
                 </div>
                 <div class="toggle-row">
                     <span data-i18n="mirrorHorizontally">Mirror horizontally</span>
@@ -104,10 +98,8 @@
 
             <section class="card" aria-labelledby="obs-heading">
                 <div class="card-header">
-                    <div>
-                        <p class="card-kicker">03</p>
-                        <h2 id="obs-heading" data-i18n="obsIntegration">OBS integration</h2>
-                    </div>
+                    <p class="card-kicker">03</p>
+                    <h2 id="obs-heading" data-i18n="obsIntegration">OBS integration</h2>
                 </div>
                 <div class="field">
                     <label for="port" data-i18n="httpPort">HTTP port</label>
@@ -140,11 +132,9 @@
 
             <section class="card card-wide preview" aria-labelledby="preview-heading">
                 <div class="card-header">
-                    <div>
-                        <p class="card-kicker">04</p>
-                        <h2 id="preview-heading" data-i18n="livePreview">Live preview</h2>
-                        <p class="card-description" data-i18n="previewHint">Preview uses WebSocket for low-latency JPEG streaming.</p>
-                    </div>
+                    <p class="card-kicker">04</p>
+                    <h2 id="preview-heading" data-i18n="livePreview">Live preview</h2>
+                    <p class="card-description" data-i18n="previewHint">Preview uses WebSocket for low-latency JPEG streaming.</p>
                 </div>
                 <div class="preview-frame">
                     <canvas id="preview-canvas"></canvas>

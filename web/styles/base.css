@@ -102,7 +102,8 @@ h1 { max-width: 620px; font-size: clamp(28px, 5vw, 42px); line-height: 1.08; let
 }
 .card::after { position: absolute; inset: 0; pointer-events: none; content: ""; border: 1px solid rgb(255 255 255 / 3%); border-radius: inherit; }
 .card-wide { grid-column: 1 / -1; }
-.card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.card-header { margin-bottom: 22px; }
+.card-header--row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .card-kicker { margin-bottom: 7px; color: var(--accent-strong); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .card h2 { font-size: 19px; letter-spacing: -.025em; }
 .card-description { margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.5; }

@@ -1,5 +1,34 @@
-body { display: flex; align-items: center; justify-content: center; overflow: hidden; background: transparent; }
+body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: transparent;
+}
 
-#camera-canvas { display: none; width: 100%; height: 100%; object-fit: contain; }
-#camera-canvas.mirror-h { transform: scaleX(-1); }
-#camera-canvas.mirror-v { transform: scaleY(-1); }
+#camera-canvas {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: var(--overlay-display, none);
+    width: var(--overlay-w, 100%);
+    height: var(--overlay-h, 100%);
+    margin-left: var(--overlay-x, 0px);
+    margin-top: var(--overlay-y, 0px);
+    object-fit: var(--overlay-fit, contain);
+    opacity: var(--overlay-opacity, 1);
+    filter: var(--overlay-filter, none);
+    background: var(--overlay-bg, transparent);
+    border: var(--overlay-border, none);
+    border-radius: var(--overlay-radius, 0);
+    transform: translate(-50%, -50%)
+        scale(var(--overlay-scale, 1))
+        rotate(var(--overlay-rotate, 0deg))
+        scaleX(var(--overlay-mirror-h, 1))
+        scaleY(var(--overlay-mirror-v, 1));
+    transform-origin: center center;
+}
+
+/* Backward-compatible hooks for existing OBS URLs. */
+#camera-canvas.mirror-h { --overlay-mirror-h: -1; }
+#camera-canvas.mirror-v { --overlay-mirror-v: -1; }
