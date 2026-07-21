@@ -1,0 +1,23 @@
+[package]
+name = "camera-overlay"
+version = "0.1.0"
+description = "Webcam overlay served over HTTP for OBS browser source"
+authors = ["camera-overlay contributors"]
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
+nokhwa = { version = "0.10", features = ["input-native"] }
+image = "0.25"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+log = "0.4"
+env_logger = "0.11"
+once_cell = "1"
+parking_lot = "0.12"
+tray-icon = "0.19"
+bytes = "1"
+tokio-stream = { version = "0.1", features = ["sync"] }
