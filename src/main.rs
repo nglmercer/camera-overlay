@@ -1,20 +1,15 @@
-mod camera;
-mod config;
-mod logger;
-mod server;
-
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 #[tokio::main]
 async fn main() {
-    logger::init();
+    camera_overlay::logger::init();
 
-    let config = config::load();
-    let camera = Arc::new(camera::CameraController::new());
+    let config = camera_overlay::config::load();
+    let camera = Arc::new(camera_overlay::camera::CameraController::new());
     let (frame_tx, _rx) = broadcast::channel(2);
 
-    let state = Arc::new(server::AppState {
+    let state = Arc::new(camera_overlay::server::AppState {
         config: parking_lot::Mutex::new(config.clone()),
         camera: Arc::clone(&camera),
         frame_tx: frame_tx.clone(),
@@ -29,7 +24,7 @@ async fn main() {
     log::info!("Stream:   http://localhost:{port}/stream");
     log::info!("Add the overlay or stream URL as a Browser Source in OBS");
 
-    let app = server::build_router(state);
+    let app = camera_overlay::server::build_router(state);
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
