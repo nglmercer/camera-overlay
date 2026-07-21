@@ -146,10 +146,13 @@ export class WebRTCStreamRenderer {
     private waitForIceGathering(): Promise<void> {
         return new Promise<void>((resolve) => {
             if (!this.pc || this.pc.iceGatheringState === 'complete') {
+                console.log('[WebRTC Debug] ICE gathering already complete');
                 resolve();
                 return;
             }
+            console.log('[WebRTC Debug] Waiting for ICE gathering to complete... current state:', this.pc.iceGatheringState);
             const check = () => {
+                console.log('[WebRTC Debug] ICE gathering state changed to:', this.pc?.iceGatheringState);
                 if (this.pc?.iceGatheringState === 'complete') {
                     this.pc.removeEventListener('icegatheringstatechange', check);
                     resolve();
@@ -158,16 +161,19 @@ export class WebRTCStreamRenderer {
             this.pc.addEventListener('icegatheringstatechange', check);
             // Safety timeout: if gathering stalls, proceed with whatever we have
             setTimeout(() => {
+                console.warn('[WebRTC Debug] ICE gathering timeout reached (3s), proceeding with gathered candidates');
                 this.pc?.removeEventListener('icegatheringstatechange', check);
                 resolve();
-            }, 5000);
+            }, 3000);
         });
     }
 
     private async negotiate(): Promise<void> {
         if (!this.active) return;
+        console.log('[WebRTC Debug] Starting SDP negotiation...');
 
         if (this.pc) {
+            console.log('[WebRTC Debug] Closing existing RTCPeerConnection');
             this.pc.close();
             this.pc = null;
         }
@@ -180,44 +186,64 @@ export class WebRTCStreamRenderer {
                 ],
             });
 
+            this.pc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
+                if (event.candidate) {
+                    console.log('[WebRTC Debug] Discovered ICE Candidate:', event.candidate.candidate);
+                } else {
+                    console.log('[WebRTC Debug] All ICE Candidates gathered');
+                }
+            };
+
+            this.pc.oniceconnectionstatechange = () => {
+                console.log('[WebRTC Debug] ICE Connection State:', this.pc?.iceConnectionState);
+            };
+
             // Receive remote video track
             this.pc.ontrack = (event: RTCTrackEvent) => {
+                console.log('[WebRTC Debug] Received remote track:', event.track.kind, event.streams);
                 if (event.streams && event.streams[0]) {
                     this.videoEl.srcObject = event.streams[0];
                     // Ensure autoplay muted is set
                     this.videoEl.muted = true;
                     this.videoEl.autoplay = true;
-                    void this.videoEl.play().catch(() => {
-                        // Autoplay policy: already muted so this should succeed
+                    this.videoEl.playsInline = true;
+                    console.log('[WebRTC Debug] Attached MediaStream to <video> element. Attempting play()...');
+                    void this.videoEl.play().then(() => {
+                        console.log('[WebRTC Debug] <video> play() succeeded');
+                    }).catch((err) => {
+                        console.error('[WebRTC Debug] <video> play() failed:', err);
                     });
                 }
             };
 
             this.pc.onconnectionstatechange = () => {
                 const state = this.pc?.connectionState;
+                console.log('[WebRTC Debug] Connection State Changed:', state);
                 if (state === 'failed' || state === 'closed' || state === 'disconnected') {
                     if (this.active) {
+                        console.warn(`[WebRTC Debug] Connection state is ${state}, scheduling retry...`);
                         this.retryTimer = setTimeout(() => {
                             void this.negotiate();
-                        }, 2000);
+                        }, 3000);
                     }
                 }
             };
 
             // Add a receive-only transceiver for video
+            console.log('[WebRTC Debug] Adding video transceiver (recvonly)');
             this.pc.addTransceiver('video', { direction: 'recvonly' });
 
             const offer = await this.pc.createOffer();
+            console.log('[WebRTC Debug] Created local offer SDP:\n', offer.sdp);
             await this.pc.setLocalDescription(offer);
 
-            // Wait for ICE gathering to finish so all host candidates
-            // are embedded in the SDP before we send it to the server.
-            // Without this, the server receives an offer with no a=candidate
-            // lines, causing "no candidate pairs" and a dead connection.
+            // Wait for ICE gathering to finish so all host candidates are embedded
             await this.waitForIceGathering();
 
             const localSdp = this.pc.localDescription;
             if (!localSdp) throw new Error('No local description after ICE gathering');
+
+            console.log('[WebRTC Debug] Sending final offer SDP to /webrtc/offer:\n', localSdp.sdp);
 
             // Send fully-gathered SDP offer to Rust server
             const response = await fetch('/webrtc/offer', {
@@ -230,18 +256,21 @@ export class WebRTCStreamRenderer {
             });
 
             if (!response.ok) {
-                throw new Error(`Server returned ${response.status} for /webrtc/offer`);
+                const errText = await response.text();
+                throw new Error(`Server returned HTTP ${response.status} for /webrtc/offer: ${errText}`);
             }
 
             const answer: SdpMessage = await response.json();
-            await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('[WebRTC Debug] Received SDP Answer from server:\n', answer.sdp);
+            await this.pc.setRemoteDescription(new RTCSessionDescription(answer as RTCSessionDescriptionInit));
+            console.log('[WebRTC Debug] Remote description set successfully!');
 
         } catch (err) {
-            console.error('WebRTC negotiation failed:', err);
+            console.error('[WebRTC Debug] WebRTC negotiation failed:', err);
             if (this.active) {
                 this.retryTimer = setTimeout(() => {
                     void this.negotiate();
-                }, 3000);
+                }, 4000);
             }
         }
     }

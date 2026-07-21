@@ -65,19 +65,51 @@ class OverlayApp {
         }
     }
 
+    private fallbackTimer: number | null = null;
+
     private startStream(): void {
+        console.log(`[OverlayApp] Starting stream in mode: ${this.mode}`);
+        
+        // Instantiate WebSocket renderer as fallback option
+        if (!this.wsRenderer) {
+            this.wsRenderer = new CanvasStreamRenderer(this.canvas);
+        }
+
         if (this.mode === 'webrtc' && this.webrtcRenderer) {
             this.videoEl.style.display = 'block';
             this.canvas.style.display = 'none';
             this.webrtcRenderer.start();
-        } else if (this.wsRenderer) {
-            this.canvas.style.display = 'block';
-            this.videoEl.style.display = 'none';
-            this.wsRenderer.start();
+
+            // Fallback check: if WebRTC video isn't playing within 4 seconds, switch to WebSocket canvas
+            if (this.fallbackTimer !== null) clearTimeout(this.fallbackTimer);
+            this.fallbackTimer = window.setTimeout(() => {
+                if (this.videoEl.paused || this.videoEl.readyState < 2) {
+                    console.warn('[OverlayApp] WebRTC stream not playing after 4s. Falling back to low-latency WebSocket stream!');
+                    this.switchToWebSocket();
+                }
+            }, 4000);
+        } else {
+            this.switchToWebSocket();
         }
     }
 
+    private switchToWebSocket(): void {
+        console.log('[OverlayApp] Activating WebSocket canvas stream...');
+        this.mode = 'websocket';
+        this.webrtcRenderer?.stop();
+        this.videoEl.style.display = 'none';
+        this.canvas.style.display = 'block';
+        if (!this.wsRenderer) {
+            this.wsRenderer = new CanvasStreamRenderer(this.canvas);
+        }
+        this.wsRenderer.start();
+    }
+
     private stopStream(): void {
+        if (this.fallbackTimer !== null) {
+            clearTimeout(this.fallbackTimer);
+            this.fallbackTimer = null;
+        }
         this.webrtcRenderer?.stop();
         this.wsRenderer?.stop();
         this.videoEl.style.display = 'none';

@@ -104,8 +104,8 @@ async fn handle_offer(
         .map_err(|e| format!("Interceptors: {e}"))?;
 
     let mut setting_engine = webrtc::api::setting_engine::SettingEngine::default();
-    // Disable mDNS candidate obfuscation to prevent local host resolution timeouts
-    setting_engine.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+    // Enable mDNS QueryAndGather so the server resolves browser .local mDNS candidates
+    setting_engine.set_ice_multicast_dns_mode(MulticastDnsMode::QueryAndGather);
     // Filter out link-local IPv6 addresses to prevent "Invalid argument (os error 22)" UDP bind failures
     setting_engine.set_interface_filter(Box::new(|name| {
         !name.starts_with("docker") && !name.starts_with("veth")
