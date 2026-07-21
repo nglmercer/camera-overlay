@@ -55,7 +55,7 @@ pub async fn rate_limit_middleware(
     let limited = match path {
         "/start" | "/stop" => Some(&rate_limiters.control),
         "/settings" if request.method() == http::Method::POST => Some(&rate_limiters.control),
-        "/stream" | "/snapshot" => Some(&rate_limiters.data),
+        "/stream" | "/snapshot" | "/ws" => Some(&rate_limiters.data),
         _ => None,
     };
 

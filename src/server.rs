@@ -35,12 +35,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(serve_index))
         .route("/config", get(serve_config))
         .route("/stream", get(mjpeg_stream))
+        .route("/ws", get(ws_stream))
         .route("/snapshot", get(snapshot))
         .route("/settings", get(get_config).post(set_config))
         .route("/cameras", get(list_cameras))
         .route("/status", get(camera_status))
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
+        .nest_service("/chunks", tower_http::services::ServeDir::new("static/chunks"))
+        .route("/index.js", get(|| async { ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_str!("../static/index.js")) }))
+        .route("/config.js", get(|| async { ([(axum::http::header::CONTENT_TYPE, "application/javascript")], include_str!("../static/config.js")) }))
         .layer(middleware::from_fn_with_state(rl.clone(), rate_limit_middleware))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -123,6 +127,37 @@ async fn mjpeg_stream(State(state): State<Arc<AppState>>) -> Response {
     headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
 
     (headers, body).into_response()
+}
+
+/// WebSocket binary stream handler.
+/// Emits raw binary JPEG frames directly to WebGL/Canvas clients with skip-to-latest logic.
+async fn ws_stream(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let rx = state.frame_tx.subscribe();
+    ws.on_upgrade(move |mut socket| async move {
+        let mut rx = rx;
+        loop {
+            match rx.recv().await {
+                Ok(mut latest) => {
+                    while let Ok(newer) = rx.try_recv() {
+                        latest = newer;
+                    }
+                    let jpeg_bytes = Bytes::from((*latest.jpeg_data).clone());
+                    if socket
+                        .send(axum::extract::ws::Message::Binary(jpeg_bytes))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
 }
 
 async fn snapshot(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -492,5 +527,28 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["running"], false);
+    }
+
+    #[tokio::test]
+    async fn test_get_ws() {
+        let state = test_state();
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ws")
+                    .header("connection", "Upgrade")
+                    .header("upgrade", "websocket")
+                    .header("sec-websocket-version", "13")
+                    .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // In hyper/axum oneshot service without IO connection, ws upgrade returns 426 Upgrade Required or 101.
+        assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS || response.status() == StatusCode::UPGRADE_REQUIRED);
     }
 }
