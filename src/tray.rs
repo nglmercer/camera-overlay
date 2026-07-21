@@ -11,8 +11,12 @@ use crate::server::AppState;
 static CAMERA_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn make_icon() -> Icon {
-    let rgba = vec![0u8, 0, 0, 0];
-    Icon::from_rgba(rgba, 1, 1).expect("failed to create tray icon")
+    const ICON_PNG: &[u8] = include_bytes!("../assets/tray-icon.png");
+    let image = image::load_from_memory(ICON_PNG)
+        .expect("failed to decode embedded tray icon")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    Icon::from_rgba(image.into_raw(), width, height).expect("failed to create tray icon")
 }
 
 pub fn create_tray(state: Arc<AppState>, port: u16) -> Result<(), Box<dyn std::error::Error>> {

@@ -83,6 +83,38 @@ async fn e2e_status_reports_not_running() {
 }
 
 #[tokio::test]
+async fn e2e_serves_all_web_assets_from_the_binary() {
+    let server = TestServer::new().await;
+
+    for (path, content_type) in [
+        ("", "text/html"),
+        ("config", "text/html"),
+        ("index.js", "application/javascript"),
+        ("config.js", "application/javascript"),
+        ("chunks/overlay.js", "application/javascript"),
+        ("assets/index.css", "text/css"),
+        ("assets/config.css", "text/css"),
+        ("camera-overlay.svg", "image/svg+xml"),
+    ] {
+        let response = server.get(path).await;
+        assert_eq!(response.status(), reqwest::StatusCode::OK, "GET /{path}");
+        assert_eq!(
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .split(';')
+                .next()
+                .unwrap_or_default(),
+            content_type,
+            "content type for /{path}"
+        );
+        assert!(!response.bytes().await.unwrap().is_empty(), "GET /{path} was empty");
+    }
+}
+
+#[tokio::test]
 async fn e2e_settings_post_and_get() {
     let server = TestServer::new().await;
     let resp = server.get("settings").await;

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Camera Overlay</title>
+  <defs>
+    <linearGradient id="background" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#243b64"/>
+      <stop offset="1" stop-color="#101827"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#background)"/>
+  <path d="M17 23.5h30c2.8 0 5 2.2 5 5v13c0 2.8-2.2 5-5 5H17c-2.8 0-5-2.2-5-5v-13c0-2.8 2.2-5 5-5Z" fill="#f8fafc"/>
+  <path d="m23 23.5 3.7-5h10.6l3.7 5H23Z" fill="#f8fafc"/>
+  <circle cx="32" cy="35" r="9" fill="#243b64"/>
+  <circle cx="32" cy="35" r="5" fill="#58d6e8"/>
+  <circle cx="33.8" cy="33.2" r="1.6" fill="#d9fbff"/>
+  <circle cx="45.5" cy="29.5" r="2" fill="#ff8a65"/>
+</svg>

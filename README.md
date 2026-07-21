@@ -20,6 +20,27 @@ A lightweight webcam overlay served over HTTP — designed for OBS Browser Sourc
 | `cargo test` | Run unit and e2e integration tests |
 | `cargo build --release` | Build production binary |
 
+Build the frontend before the Rust release build so `static/` contains the latest web bundle:
+
+```bash
+npm run build:web
+cargo build --release
+```
+
+The release binary embeds every file under `static/` at compile time, including the web favicon. The tray PNG is also embedded directly in the executable, so the binary does not need the `static/` directory or an icon file beside it at runtime.
+
+To verify the embedding, run the binary from a directory that does not contain the repository assets and request the pages/assets:
+
+```bash
+cd /tmp
+/path/to/camera-overlay/target/release/camera-overlay
+curl -I http://127.0.0.1:8080/
+curl -I http://127.0.0.1:8080/assets/index.css
+curl -I http://127.0.0.1:8080/camera-overlay.svg
+```
+
+You can also run `cargo test`; the `e2e_serves_all_web_assets_from_the_binary` test checks the embedded HTML, JavaScript, CSS, and icon routes.
+
 ## HTTP & WebSocket Endpoints
 
 | Method | Path | Description |

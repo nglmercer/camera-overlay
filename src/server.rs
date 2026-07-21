@@ -1,8 +1,9 @@
 use axum::{
+    body::Body,
     extract::State,
     http::StatusCode,
     middleware,
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -16,6 +17,10 @@ use crate::camera::{CameraController, CameraFrame};
 use crate::config::CameraConfig;
 use crate::rate_limit::{rate_limit_middleware, RateLimiters};
 
+mod embedded_assets {
+    include!(concat!(env!("OUT_DIR"), "/embedded_assets.rs"));
+}
+
 pub struct AppState {
     pub config: parking_lot::Mutex<CameraConfig>,
     pub camera: Arc<CameraController>,
@@ -24,9 +29,6 @@ pub struct AppState {
     pub overlay_state: parking_lot::Mutex<serde_json::Value>,
     pub rate_limiters: RateLimiters,
 }
-
-const INDEX_HTML: &str = include_str!("../static/index.html");
-const CONFIG_HTML: &str = include_str!("../static/config.html");
 
 pub fn build_router(state: Arc<AppState>) -> Router {
     let rl = Arc::new(state.rate_limiters.clone());
@@ -41,31 +43,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/start", post(start_camera))
         .route("/stop", post(stop_camera))
         .route("/overlay", get(get_overlay).post(set_overlay))
-        .nest_service(
-            "/chunks",
-            tower_http::services::ServeDir::new("static/chunks"),
-        )
-        .nest_service(
-            "/assets",
-            tower_http::services::ServeDir::new("static/assets"),
-        )
+        .route("/chunks/{*path}", get(serve_chunk))
+        .route("/assets/{*path}", get(serve_asset))
         .route(
             "/index.js",
-            get(|| async {
-                (
-                    [(axum::http::header::CONTENT_TYPE, "application/javascript")],
-                    include_str!("../static/index.js"),
-                )
-            }),
+            get(|| async { serve_embedded("index.js") }),
         )
         .route(
             "/config.js",
-            get(|| async {
-                (
-                    [(axum::http::header::CONTENT_TYPE, "application/javascript")],
-                    include_str!("../static/config.js"),
-                )
-            }),
+            get(|| async { serve_embedded("config.js") }),
         )
         .layer(middleware::from_fn_with_state(
             rl.clone(),
@@ -83,12 +69,53 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-async fn serve_index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn serve_index() -> Response {
+    serve_embedded("index.html")
 }
 
-async fn serve_config() -> Html<&'static str> {
-    Html(CONFIG_HTML)
+async fn serve_config() -> Response {
+    serve_embedded("config.html")
+}
+
+async fn serve_asset(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    serve_embedded(&format!("assets/{path}"))
+}
+
+async fn serve_chunk(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    serve_embedded(&format!("chunks/{path}"))
+}
+
+fn serve_embedded(path: &str) -> Response {
+    let Some(bytes) = embedded_assets::get(path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mut response = Response::new(Body::from(Bytes::from_static(bytes)));
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static(content_type(path)),
+    );
+    response
+}
+
+fn content_type(path: &str) -> &'static str {
+    if path.ends_with(".html") {
+        "text/html; charset=utf-8"
+    } else if path.ends_with(".js") {
+        "application/javascript; charset=utf-8"
+    } else if path.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if path.ends_with(".json") {
+        "application/json"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 /// WebSocket binary stream handler.
